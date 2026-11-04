@@ -1,6 +1,6 @@
 # Heat Pump Cycle Trainer
 
-A phone-friendly refrigeration cycle simulator for training HVAC test lab technicians without touching live equipment.
+A desktop refrigeration cycle simulator for training HVAC test lab technicians without touching live equipment.
 
 It models a split heat pump (cooling and heating) end to end: the compressor, reversing valve, both coils, metering devices, line set, accumulator, fans, safety switches and electrical. Every adjustment ripples through both the refrigerant side and the air side.
 

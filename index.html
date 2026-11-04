@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=1280">
 <title>Heat Pump Cycle Trainer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.4}
 button,select,input{font:inherit;color:inherit}
-.wrap{max-width:1180px;margin:0 auto;padding:0 12px 60px}
+.wrap{max-width:1500px;min-width:1000px;margin:0 auto;padding:0 12px 60px}
 header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 0 8px}
 h1{font-family:var(--f-disp);font-weight:700;font-size:20px;letter-spacing:.04em;text-transform:uppercase;margin:0;flex:1;min-width:160px;text-wrap:balance}
 h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;letter-spacing:0;text-transform:none;color:var(--muted)}
@@ -39,8 +39,7 @@ h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;
 
 /* gauge strip */
 .strip{position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg) 85%,transparent);padding:6px 0 10px;margin:0 -2px}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-@media(min-width:820px){.tiles{grid-template-columns:repeat(8,1fr)}}
+.tiles{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
 .tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;position:relative;min-width:0;border-top:3px solid var(--tc,var(--line))}
 .tile .k{font-family:var(--f-disp);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile .v{font-family:var(--f-num);font-weight:600;font-size:clamp(16px,4.4vw,19px);font-variant-numeric:tabular-nums;line-height:1.15;white-space:nowrap}
@@ -55,7 +54,7 @@ h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;
 
 /* layout */
 .grid{display:grid;gap:12px}
-@media(min-width:980px){.grid{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);align-items:start}}
+.grid{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:start}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
 .card h2{font-family:var(--f-disp);font-size:15px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px;color:var(--muted);font-weight:600}
 .schem{width:100%;height:auto;display:block;touch-action:manipulation}
@@ -67,7 +66,8 @@ h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;
 .probe{margin-top:10px;background:var(--panel2);border-radius:10px;padding:10px;border:1px solid var(--line)}
 .probe h3{margin:0 0 6px;font-family:var(--f-disp);font-size:17px;letter-spacing:.03em}
 .kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px}
-@media(min-width:520px){.kv{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.probe .kv{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(min-width:1400px){.probe .kv{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .kv div{display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:1px dashed var(--line);padding:3px 0;font-size:13px;min-width:0}
 .kv b{font-family:var(--f-num);font-weight:500;font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere;min-width:0}
 .kv span{flex:0 0 auto;max-width:58%}
@@ -138,62 +138,6 @@ canvas{width:100%;display:block;background:var(--panel2);border-radius:10px}
 svg text{font-family:var(--f-body)}
 .foot{color:var(--muted);font-size:12px;margin-top:16px;max-width:75ch}
 
-/* ---------- phone layout ---------- */
-.mini-line,.bnav,.toast,.logbox{display:none}
-@media (max-width:819px){
-  .wrap{padding:0 10px calc(74px + env(safe-area-inset-bottom))}
-  header{padding:8px 0 4px;gap:8px;flex-wrap:nowrap}
-  h1{font-size:15px;min-width:0;white-space:nowrap}
-  h1{display:none}
-  header{justify-content:space-between}
-  .tile .d{position:static;display:inline-block;margin-top:1px;font-size:10px;line-height:14px;min-height:14px}
-  .tile .d:empty{visibility:hidden}
-  h1 small{display:none}
-  .seg button{padding:5px 9px;font-size:13px}
-  #callBtn{padding:5px 9px;font-size:13px}
-  .status{gap:6px}
-  .status .clock#clock{display:none}
-  .strip{padding:4px 0 6px}
-  .tiles{grid-template-columns:repeat(4,1fr);gap:5px}
-  .tile{padding:4px 6px 5px}
-  .tile:nth-child(n+5){display:none}
-  .tile .s{display:none}
-  .mini-line{display:flex;justify-content:space-between;gap:6px;font-family:var(--f-num);font-size:12px;color:var(--muted);padding:5px 2px 0;white-space:nowrap;overflow:hidden}
-  .mini-line b{color:var(--ink);font-weight:500}
-  .settle{font-size:11px;min-height:0;margin-top:2px}
-  .grid{display:block}
-  .card{padding:10px;border-radius:12px}
-  .card h2.long{display:none}
-  .legend{display:none}
-  .tabs{display:none}
-  #changes{display:none}
-  .foot{display:none}
-  body[data-view="system"] #rightCard{display:none}
-  body:not([data-view="system"]) #leftCol{display:none}
-  .kv{grid-template-columns:1fr;gap:0}
-  .kv div{font-size:14px;padding:4px 0}
-  .probe{display:none;position:fixed;left:8px;right:8px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:38;max-height:36vh;overflow-y:auto;margin:0;padding:8px 12px 10px;border-color:var(--accent);box-shadow:0 -6px 24px rgba(0,0,0,.55);overscroll-behavior:contain}
-  body.sheet .probe{display:block}
-  body.sheet #leftCol{padding-bottom:36vh}
-  .probe h3{padding-right:34px;font-size:16px}
-  body .probe .x{display:block}
-  .logbox{display:block;margin-top:10px}
-  .bnav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--panel);border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom))}
-  .bnav button{background:none;border:0;color:var(--muted);padding:6px 0 4px;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:var(--f-disp);font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
-  .bnav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
-  .bnav button.on{color:var(--accent)}
-  .toast{display:block;position:fixed;left:10px;right:10px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:39;background:var(--panel2);border:1px solid var(--accent);border-radius:12px;padding:8px 10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5);transform:translateY(calc(100% + 120px));visibility:hidden;transition:transform .25s ease,visibility .25s;pointer-events:none}
-  .toast.show{transform:none;visibility:visible;pointer-events:auto}
-  .toast .head{color:var(--accent);font-weight:600;margin-bottom:3px}
-  .toast ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px}
-  .toast li{display:flex;justify-content:space-between;gap:6px}
-  .toast li b{font-family:var(--f-num);font-weight:500}
-  .toast .up{color:#ff9a87}.toast .dn{color:#8cc8ff}
-  .alerts .alert{padding:5px 8px;font-size:12px}
-}
-.probe .x{display:none;position:sticky;top:0;float:right;margin:-4px -4px 0 0;width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:18px;line-height:1;cursor:pointer}
-.more{display:none;margin-top:6px;background:none;border:0;color:var(--accent);font-weight:600;font-size:13px;padding:4px 0;cursor:pointer}
-@media (prefers-reduced-motion:reduce){.toast{transition:none}}
 </style>
 </head>
 <body>
@@ -204,26 +148,24 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.0.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.1.0</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
 
 <div class="strip">
   <div class="tiles" id="tiles"></div>
-  <div class="mini-line" id="miniLine"></div>
   <div class="settle" id="settle"></div>
 </div>
 
 <div class="grid">
 <div id="leftCol">
   <div class="card">
-    <h2 class="long">System — tap a numbered port or a part to measure it</h2>
+    <h2 class="long">System — click a numbered port or a part to measure it</h2>
     <svg class="schem" id="schem" viewBox="0 0 400 300" role="img" aria-label="Split heat pump schematic"></svg>
     <div class="legend"><span><i style="background:var(--hot)"></i>Hot gas</span><span><i style="background:var(--liq)"></i>Liquid</span><span><i style="background:var(--mix)"></i>Low-side mixture</span><span><i style="background:var(--suct)"></i>Suction vapor</span><span><i style="background:repeating-linear-gradient(90deg,var(--liq) 0 3px,#fff 3px 5px)"></i>Flash gas</span></div>
     <div class="alerts" id="alerts"></div>
     <div class="probe" id="probe"></div>
-    <details class="grp logbox" id="logboxD"><summary>Event log</summary><div class="grpb" id="logbox"></div></details>
   </div>
   <div class="card changes" id="changes" style="margin-top:12px"><h2>What changed</h2><div class="note">Adjust anything. Every reading that moves is listed here and flagged on the gauges above, so you can see both sides of the system react together.</div></div>
 </div>
@@ -239,14 +181,6 @@ svg text{font-family:var(--f-body)}
   <div class="pane" id="tab-log"></div>
 </div>
 </div>
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
-<nav class="bnav" aria-label="Views">
-  <button data-view="system" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="14" y="5" width="7" height="14" rx="2"/><path d="M11 9h3M11 15h3"/></svg>System</button>
-  <button data-view="controls"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Adjust</button>
-  <button data-view="readings"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"/><path d="M12 13l4-3M9 3h6"/></svg>Readings</button>
-  <button data-view="elec"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg>Amps</button>
-  <button data-view="ph"><svg viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M7 16c3-9 8-9 11-1"/></svg>P-h</button>
-</nav>
 <p class="foot">Training model, not a design or certification tool. Properties come from a Peng-Robinson equation of state fitted to published pressure-temperature charts (typically within 1–3 psi). Blends with glide use bubble point for subcooling and dew point for superheat. Heat exchangers use a moving-boundary effectiveness model; charge is tracked by refrigerant mass in every coil and line.</p>
 </div>
 
@@ -743,7 +677,6 @@ if (typeof module !== 'undefined') module.exports = API; else root.HPEngine = AP
 const E = HPEngine, FL = {};
 for (const k in PROPS) FL[k] = new E.Fluid(k, PROPS[k]);
 const PATM = E.PATM, $ = id => document.getElementById(id);
-const PHONE = () => window.matchMedia('(max-width:819px)').matches;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* ---------- configuration ---------- */
@@ -944,10 +877,8 @@ function renderTiles(){
     el.children[1].innerHTML = `${esc(v)}<u>${esc(u)}</u>`;
     el.children[2].textContent = t.s(disp);
   }
-  const ml = $('miniLine');
-  if (ml) ml.innerHTML = `<span>Dis <b>${f0(disp.Tdis)}°F</b></span><span><b>${f1(disp.amps)}</b> A</span><span><b>${(disp.Q/1000).toFixed(1)}</b>k ${cfg.mode==='heat'?'heat':'cool'}</span><span>COP <b>${S.comp ? disp.COP.toFixed(2) : '—'}</b></span>`;
   const unsettled = S.comp && ['lowP','highP','Tdis','SH'].some(k => isFinite(VM[k]) && Math.abs(disp[k] - VM[k]) > (k.endsWith('P') ? 2 : 1));
-  $('settle').textContent = unsettled ? (PHONE() ? 'Settling…' : 'Settling — readings are still moving toward steady state. Wait for stable conditions before recording.') : (S.comp ? 'Stable.' : '');
+  $('settle').textContent = unsettled ? 'Settling — readings are still moving toward steady state. Wait for stable conditions before recording.' : (S.comp ? 'Stable.' : '');
 }
 let flashTimer = null;
 function flashDeltas(prev, cur){
@@ -1038,16 +969,12 @@ function buildSchem(){
   svg.addEventListener('click', ev => {
     const tp = ev.target.closest('.tp'), part = ev.target.closest('.comp');
     const nsel = tp ? {kind:'tp', id: +tp.dataset.tp} : part ? {kind:'part', id: part.dataset.part} : null; if (!nsel) return;
-    if (PHONE() && selected && document.body.classList.contains('sheet') && selected.kind === nsel.kind && selected.id === nsel.id) { document.body.classList.remove('sheet'); selected = null; markSel(); return; }
-    selected = nsel;
-    const wasOpen = document.body.classList.contains('sheet');
-    document.body.classList.add('sheet'); renderProbe(); markSel();
-    if (PHONE() && !wasOpen) { const sv = $('schem').getBoundingClientRect(), stripH = document.querySelector('.strip').getBoundingClientRect().height; window.scrollBy({top: sv.top - stripH - 4, behavior: 'smooth'}); }
+    selected = nsel; renderProbe(); markSel();
   });
 }
 function markSel(){
   document.querySelectorAll('#schem .tp,#schem .comp').forEach(e => e.classList.remove('sel'));
-  if (!selected || (PHONE() && !document.body.classList.contains('sheet'))) return;
+  if (!selected) return;
   const q = selected.kind === 'tp' ? `.tp[data-tp="${selected.id}"]` : `.comp[data-part="${selected.id}"]`;
   const el = document.querySelector('#schem ' + q); if (el) el.classList.add('sel');
 }
@@ -1212,9 +1139,6 @@ function renderProbe(){
     }
   }
   el.innerHTML = h;
-  const x = document.createElement('button'); x.className = 'x'; x.setAttribute('aria-label', 'Close readings'); x.textContent = '×';
-  x.onclick = () => { document.body.classList.remove('sheet'); selected = null; markSel(); };
-  el.prepend(x);
 }
 let probeOpen = false;
 
@@ -1286,12 +1210,8 @@ function renderChanges(what, prev, cur){
     rows.push(`<li><span>${ll}</span><b class="${d>0?'up':'dn'}">${d>0?'+':''}${dv} ${u}</b></li>`);
   }
   el.innerHTML = `<h2>What changed</h2><div class="head">${esc(what)}</div>` + (rows.length ? `<ul>${rows.join('')}</ul>` : '<div class="note">No significant change at steady state.</div>');
-  showToast(`<div class="head">${esc(what)}</div>` + (rows.length ? `<ul>${rows.slice(0,8).join('')}</ul>` : '<div class="note">No significant change.</div>'));
 }
 
-let toastT = null;
-function showToast(html){ const t = $('toast'); if (!t) return; t.innerHTML = html; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 7000); }
-$('toast').addEventListener('click', () => $('toast').classList.remove('show'));
 
 /* ---------- controls ---------- */
 const CTL = [];  // {id, get, set, ...}
@@ -1512,7 +1432,7 @@ function renderElec(){
   h += `<h2 style="margin-top:12px">System</h2>` + kv([['Total power', on ? f0(e.totalW) + ' W' : f0(bOn ? e.blower.W : 0) + ' W'], ['COP', on ? (disp.COP).toFixed(2) : '—'], ['EER (Btu/Wh)', on ? (disp.COP * 3.412).toFixed(1) : '—']]);
   $('tab-elec').innerHTML = h;
 }
-function renderLog(){ const el = $('tab-log'); if (!el) return; const lb = $('logbox'); if (lb) lb.innerHTML = logRows.slice(0,15).map(r => `<div class="note" style="${r.kind==='bad'?'color:#ff9a87':''}"><span style="font-family:var(--f-num)">${r.t}</span> ${esc(r.msg)}</div>`).join('') || '<div class="note">No events yet.</div>'; el.innerHTML = '<h2>Event log</h2>' + (logRows.length ? '<div class="tw"><table>' + logRows.map(r => `<tr><td class="n" style="width:56px">${r.t}</td><td style="text-align:left;white-space:normal;${r.kind==='bad'?'color:#ff9a87':''}">${esc(r.msg)}</td></tr>`).join('') + '</table></div>' : '<p class="note">Trips, restarts and changes appear here.</p>'); }
+function renderLog(){ const el = $('tab-log'); if (!el) return; el.innerHTML = '<h2>Event log</h2>' + (logRows.length ? '<div class="tw"><table>' + logRows.map(r => `<tr><td class="n" style="width:56px">${r.t}</td><td style="text-align:left;white-space:normal;${r.kind==='bad'?'color:#ff9a87':''}">${esc(r.msg)}</td></tr>`).join('') + '</table></div>' : '<p class="note">Trips, restarts and changes appear here.</p>'); }
 
 function drawPH(){
   const cv = $('ph'); if (!cv.offsetParent) return;
@@ -1582,18 +1502,6 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
   if (b.dataset.tab === 'ph') drawPH();
 }));
 window.addEventListener('resize', () => drawPH());
-function setView(v){
-  document.body.dataset.view = v;
-  document.querySelectorAll('.bnav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-  if (v !== 'system') {
-    document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === v));
-    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + v));
-    if (v === 'ph') drawPH(); if (v === 'elec') renderElec();
-  }
-  window.scrollTo(0, 0);
-}
-document.querySelectorAll('.bnav button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
-document.body.dataset.view = 'system';
 
 /* ---------- boot ---------- */
 if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
@@ -1606,7 +1514,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.0.0 started at steady state.');
+logEvent('Simulator v1.1.0 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
