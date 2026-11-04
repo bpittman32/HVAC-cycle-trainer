@@ -35,6 +35,7 @@ h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;
 .pill{font-family:var(--f-disp);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:13px;padding:3px 9px;border-radius:99px;border:1px solid currentColor}
 .pill.run{color:var(--good)}.pill.trip{color:var(--bad)}.pill.wait{color:var(--warn)}.pill.idle{color:var(--muted)}
 .clock{font-family:var(--f-num);color:var(--muted);font-size:12px}
+.ver{margin-left:auto;opacity:.8}
 
 /* gauge strip */
 .strip{position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg) 85%,transparent);padding:6px 0 10px;margin:0 -2px}
@@ -203,6 +204,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.0.0</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -1604,7 +1606,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator started at steady state.');
+logEvent('Simulator v1.0.0 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {

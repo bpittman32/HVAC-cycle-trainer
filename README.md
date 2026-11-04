@@ -36,3 +36,7 @@ After editing anything in `src/`, run `python3 tools/build.py`.
 ## Accuracy
 
 This is a training model, not a design or certification tool. Saturation pressures match published PT charts within about 1–3 psi. Heat exchangers use a moving-boundary effectiveness model.
+
+## Version
+
+The version shows at the top of the page (for example `v1.0.0`) and in the event log when the simulator starts. Hover over it for the build date. The number lives in `VERSION` and is stamped in by `tools/build.py`.
