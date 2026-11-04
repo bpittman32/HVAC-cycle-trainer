@@ -153,7 +153,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.2.2</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.3.0</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -814,6 +814,7 @@ const GLOSSARY = {
   'outdoor wet bulb': 'Outdoor wet bulb — matters for frost in heating.',
   'entering water': 'Water or glycol temperature entering this heat exchanger.',
   'freeze cut-out (leaving fluid)': 'Freeze protection trips the compressor if leaving fluid falls to this temperature.',
+  'standard test point': 'Rating and performance test conditions from the standard this unit type is tested to. Choosing one sets the mode, indoor and outdoor conditions, water temperatures and flows, and compressor stage or speed. Break-in runs the unit at its rating conditions before testing.',
   'freeze protection': 'Stops the compressor when a water loop gets too cold.',
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',
@@ -889,6 +890,88 @@ function tipFor(text) {
   return GLOSSARY[u] || null;
 }
 
+/* Standard test points by unit type. id/od: {db,wb} for air, {ewt} for water (°F).
+   load: 'full' | 'low' | 'int' | number (% capacity for part-load points). gpm: gpm per ton (optional). */
+const A210 = { db: 80, wb: 67 }, A210dry = { db: 80, wb: 57 }, H210 = { db: 70, wb: 60 };
+const TESTSETS = {
+  'ahri210': { title: 'AHRI 210/240 — unitary air-source (under 65,000 Btu/h)', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: A210, od: { db: 95, wb: 75 }, load: 'full', note: 'Optional compressor break-in before testing, up to 20 hours as specified by the manufacturer. Run here at the A conditions.' },
+    { k: 'A2', name: 'A / A2 — full capacity', mode: 'cool', id: A210, od: { db: 95, wb: 75 }, load: 'full', note: 'Standard rating point for cooling capacity and EER2.' },
+    { k: 'A1', name: 'A1 — low capacity', mode: 'cool', id: A210, od: { db: 95, wb: 75 }, load: 'low', staged: true },
+    { k: 'EV', name: 'EV — intermediate speed', mode: 'cool', id: A210, od: { db: 87, wb: 69 }, load: 'int', variable: true },
+    { k: 'B2', name: 'B / B2 — full capacity', mode: 'cool', id: A210, od: { db: 82, wb: 65 }, load: 'full', note: 'SEER2 calculation point.' },
+    { k: 'B1', name: 'B1 — low capacity', mode: 'cool', id: A210, od: { db: 82, wb: 65 }, load: 'low', staged: true },
+    { k: 'C', name: 'C / D — dry coil', mode: 'cool', id: A210dry, od: { db: 82, wb: 58 }, load: 'full', note: 'Steady dry-coil (C) and cyclic (D) tests; indoor wet bulb low enough that no condensate forms.' },
+    { k: 'F1', name: 'F1 — low capacity', mode: 'cool', id: A210, od: { db: 67, wb: 53.5 }, load: 'low', staged: true },
+    { k: 'G1', name: 'G1 / I1 — dry coil, low capacity', mode: 'cool', id: A210dry, od: { db: 67, wb: 58 }, load: 'low', staged: true },
+    { k: 'MAX', name: 'Maximum operating (cooling)', mode: 'cool', id: A210, od: { db: 115, wb: 75 }, load: 'full', note: 'Unit must run without tripping a safety.' },
+    { k: 'XMAX', name: 'Extra-high maximum operating (cooling)', mode: 'cool', id: A210, od: { db: 125.6, wb: 75 }, load: 'full' },
+    { k: 'LOW', name: 'Low-temperature operation (cooling)', mode: 'cool', id: { db: 67, wb: 57 }, od: { db: 67, wb: 57 }, load: 'full', note: 'Checks the indoor coil does not freeze up.' },
+    { k: 'INS', name: 'Insulation efficiency / condensate disposal', mode: 'cool', id: { db: 80, wb: 75 }, od: { db: 80, wb: 75 }, load: 'full' },
+    { k: 'H0', name: 'H0 / H01 — 62°F', mode: 'heat', id: H210, od: { db: 62, wb: 56.5 }, load: 'low' },
+    { k: 'H1', name: 'H1 / H1C — 47°F', mode: 'heat', id: H210, od: { db: 47, wb: 43 }, load: 'full', note: 'High-temperature heating rating point (capacity and COP at 47°F).' },
+    { k: 'H11', name: 'H11 — 47°F, low capacity', mode: 'heat', id: H210, od: { db: 47, wb: 43 }, load: 'low', staged: true },
+    { k: 'H2', name: 'H2 — 35°F frost/defrost', mode: 'heat', id: H210, od: { db: 35, wb: 33 }, load: 'full' },
+    { k: 'H3', name: 'H3 — 17°F', mode: 'heat', id: H210, od: { db: 17, wb: 15 }, load: 'full', note: 'Low-temperature heating rating point.' },
+    { k: 'H4', name: 'H4 — 5°F', mode: 'heat', id: H210, od: { db: 5, wb: 3 }, load: 'full', note: 'Optional cold-climate point.' },
+    { k: 'HMAX', name: 'Maximum operating (heating)', mode: 'heat', id: { db: 80, wb: 60 }, od: { db: 75, wb: 65 }, load: 'full' },
+  ]},
+  'ahri340': { title: 'AHRI 340/360 — commercial unitary (65,000 Btu/h and up)', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: A210, od: { db: 95, wb: 75 }, load: 'full', note: 'Optional compressor break-in before testing, up to 20 hours as specified by the manufacturer. Run here at the A conditions.' },
+    { k: 'A', name: 'A — full load (EER)', mode: 'cool', id: A210, od: { db: 95, wb: 75 }, load: 'full' },
+    { k: 'P75', name: 'IEER 75% load', mode: 'cool', id: A210, od: { db: 81.5, wb: 66 }, load: 75 },
+    { k: 'P50', name: 'IEER 50% load', mode: 'cool', id: A210, od: { db: 68, wb: 57 }, load: 50 },
+    { k: 'P25', name: 'IEER 25% load', mode: 'cool', id: A210, od: { db: 65, wb: 55 }, load: 25 },
+    { k: 'MAX', name: 'Maximum operating (cooling)', mode: 'cool', id: A210, od: { db: 115, wb: 75 }, load: 'full' },
+    { k: 'LOW', name: 'Low-temperature operation (cooling)', mode: 'cool', id: { db: 67, wb: 57 }, od: { db: 67, wb: 57 }, load: 'full' },
+    { k: 'H1', name: 'H1 — 47°F', mode: 'heat', id: H210, od: { db: 47, wb: 43 }, load: 'full' },
+    { k: 'H3', name: 'H3 — 17°F', mode: 'heat', id: H210, od: { db: 17, wb: 15 }, load: 'full' },
+    { k: 'HMAX', name: 'Maximum operating (heating)', mode: 'heat', id: { db: 80, wb: 60 }, od: { db: 75, wb: 65 }, load: 'full' },
+  ]},
+  'iso13256_1': { title: 'ISO 13256-1 — water-to-air heat pump', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: { db: 80.6, wb: 66.2 }, od: { ewt: 86 }, load: 'full', note: 'Optional compressor break-in before testing, as specified by the manufacturer. Run here at the water-loop cooling point.' },
+    { k: 'WLC', name: 'Water loop (WLHP) cooling — 86°F', mode: 'cool', id: { db: 80.6, wb: 66.2 }, od: { ewt: 86 }, load: 'full' },
+    { k: 'WLH', name: 'Water loop (WLHP) heating — 68°F', mode: 'heat', id: { db: 68, wb: 59 }, od: { ewt: 68 }, load: 'full' },
+    { k: 'GWC', name: 'Ground water (GWHP) cooling — 59°F', mode: 'cool', id: { db: 80.6, wb: 66.2 }, od: { ewt: 59 }, load: 'full' },
+    { k: 'GWH', name: 'Ground water (GWHP) heating — 50°F', mode: 'heat', id: { db: 68, wb: 59 }, od: { ewt: 50 }, load: 'full' },
+    { k: 'GLC', name: 'Ground loop (GLHP) cooling — 77°F', mode: 'cool', id: { db: 80.6, wb: 66.2 }, od: { ewt: 77 }, load: 'full' },
+    { k: 'GLCP', name: 'Ground loop (GLHP) cooling part load — 68°F', mode: 'cool', id: { db: 80.6, wb: 66.2 }, od: { ewt: 68 }, load: 'low' },
+    { k: 'GLH', name: 'Ground loop (GLHP) heating — 32°F', mode: 'heat', id: { db: 68, wb: 59 }, od: { ewt: 32 }, load: 'full', note: 'Ground-loop heating uses antifreeze (brine) at 32°F entering.' },
+    { k: 'GLHP', name: 'Ground loop (GLHP) heating part load — 41°F', mode: 'heat', id: { db: 68, wb: 59 }, od: { ewt: 41 }, load: 'low' },
+  ]},
+  'iso13256_2': { title: 'ISO 13256-2 — water-to-water heat pump', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: { ewt: 53.6 }, od: { ewt: 86 }, load: 'full', note: 'Optional compressor break-in, as specified by the manufacturer. Run here at the water-loop cooling point.' },
+    { k: 'WLC', name: 'Water loop cooling — load 53.6°F / source 86°F', mode: 'cool', id: { ewt: 53.6 }, od: { ewt: 86 }, load: 'full' },
+    { k: 'WLH', name: 'Water loop heating — load 104°F / source 68°F', mode: 'heat', id: { ewt: 104 }, od: { ewt: 68 }, load: 'full' },
+    { k: 'GWC', name: 'Ground water cooling — load 53.6°F / source 59°F', mode: 'cool', id: { ewt: 53.6 }, od: { ewt: 59 }, load: 'full' },
+    { k: 'GWH', name: 'Ground water heating — load 104°F / source 50°F', mode: 'heat', id: { ewt: 104 }, od: { ewt: 50 }, load: 'full' },
+    { k: 'GLC', name: 'Ground loop cooling — load 53.6°F / source 77°F', mode: 'cool', id: { ewt: 53.6 }, od: { ewt: 77 }, load: 'full' },
+    { k: 'GLH', name: 'Ground loop heating — load 104°F / source 32°F', mode: 'heat', id: { ewt: 104 }, od: { ewt: 32 }, load: 'full' },
+  ]},
+  'ahri550wc': { title: 'AHRI 550/590 — water-cooled chiller', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: { ewt: 54, gpm: 2.4 }, od: { ewt: 85, gpm: 3 }, load: 'full', note: 'Run at standard rating conditions.' },
+    { k: 'STD', name: 'Standard rating — 44°F LWT, 85°F ECWT', mode: 'cool', id: { ewt: 54, gpm: 2.4 }, od: { ewt: 85, gpm: 3 }, load: 'full', note: '54°F entering / 44°F leaving chilled water at 2.4 gpm/ton; 85°F entering condenser water at 3 gpm/ton.' },
+    { k: 'P75', name: 'IPLV 75% load — 75°F ECWT', mode: 'cool', id: { ewt: 51.5, gpm: 2.4 }, od: { ewt: 75, gpm: 3 }, load: 75 },
+    { k: 'P50', name: 'IPLV 50% load — 65°F ECWT', mode: 'cool', id: { ewt: 49, gpm: 2.4 }, od: { ewt: 65, gpm: 3 }, load: 50 },
+    { k: 'P25', name: 'IPLV 25% load — 65°F ECWT', mode: 'cool', id: { ewt: 46.5, gpm: 2.4 }, od: { ewt: 65, gpm: 3 }, load: 25 },
+  ]},
+  'ahri550ac': { title: 'AHRI 550/590 — air-cooled chiller / air-to-water heat pump', tests: [
+    { k: 'BI', name: 'Break-in run', mode: 'cool', id: { ewt: 54, gpm: 2.4 }, od: { db: 95, wb: 75 }, load: 'full', note: 'Run at standard rating conditions.' },
+    { k: 'STD', name: 'Standard rating — 44°F LWT, 95°F air', mode: 'cool', id: { ewt: 54, gpm: 2.4 }, od: { db: 95, wb: 75 }, load: 'full', note: '54°F entering / 44°F leaving chilled water at 2.4 gpm/ton; 95°F air entering the condenser.' },
+    { k: 'P75', name: 'IPLV 75% load — 80°F air', mode: 'cool', id: { ewt: 51.5, gpm: 2.4 }, od: { db: 80, wb: 67 }, load: 75 },
+    { k: 'P50', name: 'IPLV 50% load — 65°F air', mode: 'cool', id: { ewt: 49, gpm: 2.4 }, od: { db: 65, wb: 56 }, load: 50 },
+    { k: 'P25', name: 'IPLV 25% load — 55°F air', mode: 'cool', id: { ewt: 46.5, gpm: 2.4 }, od: { db: 55, wb: 48 }, load: 25 },
+    { k: 'H47', name: 'Heating — 47°F air, 105°F hot water', mode: 'heat', id: { ewt: 95 }, od: { db: 47, wb: 43 }, load: 'full', note: '95°F entering / about 105°F leaving hot water.' },
+    { k: 'H17', name: 'Heating — 17°F air, 105°F hot water', mode: 'heat', id: { ewt: 95 }, od: { db: 17, wb: 15 }, load: 'full' },
+  ]},
+};
+function unitTestSets(idWater, odWater, tons) {
+  if (!idWater && !odWater) return [tons > 5.4 ? 'ahri340' : 'ahri210'];
+  if (!idWater && odWater) return ['iso13256_1'];
+  if (idWater && odWater) return ['iso13256_2', 'ahri550wc'];
+  return ['ahri550ac'];
+}
+
 </script>
 <script>
 (function(){
@@ -899,20 +982,6 @@ const PATM = E.PATM, $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* ---------- configuration ---------- */
-const PRE = {
-  cool: {
-    idAir:   [{t:'80/67 (A, B)', c:{idDB:80,idWB:67}}, {t:'80/57 dry (C, D)', c:{idDB:80,idWB:57}}, {t:'75/63', c:{idDB:75,idWB:63}}],
-    idWater: [{t:'54°F chilled water', w:54}, {t:'60°F', w:60}, {t:'47°F', w:47}],
-    odAir:   [{t:'95°F (A)', c:{odDB:95,odWB:75}}, {t:'82°F (B, C)', c:{odDB:82,odWB:65}}, {t:'105°F', c:{odDB:105,odWB:76}}, {t:'115°F', c:{odDB:115,odWB:78}}, {t:'65°F', c:{odDB:65,odWB:55}}],
-    odWater: [{t:'86°F tower / WLHP', w:86}, {t:'77°F ground loop', w:77}, {t:'59°F groundwater', w:59}, {t:'95°F', w:95}],
-  },
-  heat: {
-    idAir:   [{t:'70/60', c:{idDB:70,idWB:60}}, {t:'65/55', c:{idDB:65,idWB:55}}],
-    idWater: [{t:'104°F fan coil', w:104}, {t:'86°F radiant', w:86}, {t:'120°F', w:120}],
-    odAir:   [{t:'47°F (H1)', c:{odDB:47,odWB:43}}, {t:'35°F (H2)', c:{odDB:35,odWB:33}}, {t:'17°F (H3)', c:{odDB:17,odWB:15}}, {t:'5°F', c:{odDB:5,odWB:4}}, {t:'62°F', c:{odDB:62,odWB:56}}],
-    odWater: [{t:'68°F WLHP', w:68}, {t:'50°F groundwater', w:50}, {t:'32°F ground loop', w:32}],
-  }
-};
 const TONS = [1.5,2,2.5,3,3.5,4,5,7.5,10];
 function defaults(){
   return {refrigerant:'R-410A',tons:3,mode:'cool',chargeMode:'realistic',shTarget:10,scTarget:10,lineLen:25,
@@ -1448,7 +1517,7 @@ const meterOpts = [['txv','TXV'],['piston','Piston (fixed orifice)'],['eev','EEV
 function buildControls(){
   CTL.length = 0;
   let h = '';
-  h += grp('Test conditions', `<div id="presets"></div>` +
+  h += grp('Test conditions', `<div class="sel" id="w-testSel"><label for="testSel">Standard test point</label><select id="testSel" style="max-width:320px"></select></div><div class="note" id="testNote"></div>` +
     num('idDB','Indoor dry bulb','°F',-30,130,1, () => cfg.cond.idDB, v => { cfg.cond.idDB = v; cfg.cond.idWB = Math.min(cfg.cond.idWB, v); }, {hide: () => idW()}) +
     num('idWB','Indoor wet bulb','°F',-30,130,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB), {hide: () => idW()}) +
     num('idEwt',() => roleOf('id') + ' entering water','°F',-30,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
@@ -1511,8 +1580,9 @@ function buildControls(){
     num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v));
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
   $('tab-controls').innerHTML = h;
-  // presets
+  // test points
   renderPresets();
+  $('testSel').addEventListener('change', e => applyTest(e.target.value));
   // wire
   for (const c of CTL) {
     const el = $(c.id);
@@ -1531,26 +1601,48 @@ function buildControls(){
   $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
-function presetGroups(){
-  const P = PRE[cfg.mode];
-  return [
-    [idW() ? roleOf('id') + ' water' : 'Indoor', idW() ? P.idWater : P.idAir, idW() ? 'idWater' : 'idAir'],
-    [odW() ? roleOf('od') + ' water' : 'Outdoor', odW() ? P.odWater : P.odAir, odW() ? 'odWater' : 'odAir'],
-  ];
+function testSets(){ return unitTestSets(idW(), odW(), cfg.tons).map(k => [k, TESTSETS[k]]); }
+function loadSettings(load){
+  const c = cfg.comp, t = c.type;
+  if (load === 'full') return t === 'two' ? {stage:'high'} : t === 'inv' ? {speed:100} : {};
+  if (load === 'low') return t === 'two' ? {stage:'low'} : t === 'inv' ? {speed:40} : {};
+  if (load === 'int') return t === 'inv' ? {speed:70} : t === 'two' ? {stage:'high'} : {};
+  const pct = +load; return t === 'two' ? {stage: pct > 60 ? 'high' : 'low'} : t === 'inv' ? {speed: Math.max(30, pct)} : {};
 }
-function presetOn(kind, p){
-  if (p.c) return Object.keys(p.c).every(k => cfg.cond[k] === p.c[k]);
-  return kind === 'idWater' ? cfg.idWater.ewt === p.w : cfg.water.ewt === p.w;
+function testVisible(t){ if (t.staged && cfg.comp.type === 'single') return false; if (t.variable && cfg.comp.type !== 'inv') return false; return true; }
+function testMatches(t){
+  if (t.mode !== cfg.mode) return false;
+  const near = (a, b) => Math.abs(a - b) < 0.05;
+  const side = (spec, isW, cond, w) => spec.ewt != null ? isW && near(w.ewt, spec.ewt) : !isW && near(cond.db, spec.db) && near(cond.wb, spec.wb);
+  if (!side(t.id, idW(), {db: cfg.cond.idDB, wb: cfg.cond.idWB}, cfg.idWater)) return false;
+  if (!side(t.od, odW(), {db: cfg.cond.odDB, wb: cfg.cond.odWB}, cfg.water)) return false;
+  const ls = loadSettings(t.load); return Object.keys(ls).every(k => cfg.comp[k] === ls[k]);
 }
 function renderPresets(){
-  const el = $('presets'); if (!el) return;
-  el.innerHTML = presetGroups().map(([lbl, list, kind], g) => `<div class="note" style="margin:2px 0 4px">${lbl} presets</div><div class="chips">` +
-    list.map((p,i) => `<button class="chip" data-g="${g}" data-pre="${i}">${esc(p.t)}</button>`).join('') + '</div>').join('');
-  el.querySelectorAll('[data-pre]').forEach(b => b.addEventListener('click', () => {
-    const [lbl, list, kind] = presetGroups()[+b.dataset.g], p = list[+b.dataset.pre];
-    if (p.c) Object.assign(cfg.cond, p.c); else if (kind === 'idWater') cfg.idWater.ewt = p.w; else cfg.water.ewt = p.w;
-    change(`${lbl}: ${p.t}`);
-  }));
+  const sel = $('testSel'); if (!sel) return;
+  let h = '<option value="">Custom conditions</option>', cur = '';
+  for (const [key, set] of testSets()) {
+    h += `<optgroup label="${esc(set.title)}">`;
+    for (const t of set.tests) { if (!testVisible(t)) continue; const v = key + ':' + t.k; if (testMatches(t) && (v === cfg.lastTest || (!cur && t.k !== 'BI'))) cur = v; h += `<option value="${v}">${esc(t.name)}</option>`; }
+    h += '</optgroup>';
+  }
+  sel.innerHTML = h; sel.value = cur;
+  const t = cur ? TESTSETS[cur.split(':')[0]].tests.find(x => x.k === cur.split(':')[1]) : null;
+  const sets = testSets().map(([,s]) => s.title.split(' — ')[0]).join(' / ');
+  const desc = sp => sp.ewt != null ? `${sp.ewt}°F entering water${sp.gpm ? ` at ${sp.gpm} gpm/ton` : ''}` : `${sp.db}/${sp.wb}°F db/wb`;
+  $('testNote').innerHTML = t ? `<b>${esc(t.name)}</b> (${t.mode === 'heat' ? 'heating' : 'cooling'}): indoor ${desc(t.id)}, outdoor ${desc(t.od)}${t.load === 'full' ? '' : `, ${typeof t.load === 'number' ? t.load + '% load' : t.load === 'low' ? 'low capacity' : 'intermediate speed'}`}.${t.note ? ' ' + esc(t.note) : ''}`
+    : `This unit is tested to ${esc(sets)}. Pick a standard point, or set conditions by hand below.`;
+}
+function applyTest(v){
+  if (!v) return;
+  const [key, k] = v.split(':'), t = TESTSETS[key].tests.find(x => x.k === k); if (!t) return;
+  if (t.mode !== cfg.mode) setMode(t.mode, true);
+  if (t.id.ewt != null) { cfg.idWater.ewt = t.id.ewt; if (t.id.gpm) cfg.idWater.gpm = Math.round(t.id.gpm * cfg.tons * 2) / 2; } else { cfg.cond.idDB = t.id.db; cfg.cond.idWB = t.id.wb; }
+  if (t.od.ewt != null) { cfg.water.ewt = t.od.ewt; if (t.od.gpm) cfg.water.gpm = Math.round(t.od.gpm * cfg.tons * 2) / 2; } else { cfg.cond.odDB = t.od.db; cfg.cond.odWB = t.od.wb; }
+  Object.assign(cfg.comp, loadSettings(t.load));
+  cfg.lastTest = v;
+  if (k === 'BI') logEvent('Break-in run started at ' + t.name.toLowerCase() + ' conditions.');
+  change(`Test point: ${TESTSETS[key].title.split(' — ')[0]} ${t.name}`);
 }
 function applyCtl(c, v){
   if (c.type === 'num') {
@@ -1584,8 +1676,6 @@ function syncControls(){
   const fn = $('fzNote'); if (fn) fn.textContent = (idW() || odW()) ? `Freeze protection stops the compressor when a water loop's leaving fluid falls to the cut-out, and resets 10°F above it. Typical cut-out: 38°F for water, about 8°F above the freeze point for glycol (${E.WFLUID[cfg.water.fluid||'water'].name}: ${fzDefault(cfg.water.fluid)}°F).` : '';
   const an = $('airNote'); if (an) an.textContent = idW() && odW() ? 'No air side on this unit — both heat exchangers are water-to-refrigerant.' : idW() ? 'Indoor side is a water loop, so there is no blower. Outdoor fan airflow still applies.' : 'PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.';
   renderPresets();
-  const PG = presetGroups();
-  document.querySelectorAll('#presets .chip').forEach(b => { const [, list, kind] = PG[+b.dataset.g]; b.classList.toggle('on', presetOn(kind, list[+b.dataset.pre])); });
 }
 
 /* ---------- readings & electrical & P-h ---------- */
@@ -1729,7 +1819,7 @@ function change(what, big){
 function renderAll(){ renderSchemStatic(); updateSchemLive(); renderProbe(); renderAlerts(); renderReadings(); renderElec(); drawPH(); renderTiles(); renderStatus(); }
 
 /* ---------- wiring ---------- */
-function setMode(m){
+function setMode(m, silent){
   if (cfg.mode === m) return;
   const sc = cfg.savedCond; sc[cfg.mode] = Object.assign({}, cfg.cond, {ewt: cfg.water.ewt, idEwt: cfg.idWater.ewt});
   cfg.mode = m; const n = sc[m]; cfg.cond = {idDB:n.idDB, idWB:n.idWB, odDB:n.odDB, odWB:n.odWB}; cfg.water.ewt = n.ewt; cfg.idWater.ewt = n.idEwt;
@@ -1737,7 +1827,7 @@ function setMode(m){
   renderPresets();
   lastX = null;
   if (S.comp) { S.comp = false; S.asc = Math.min(cfg.sw.asc, 30); logEvent(`Reversing valve ${m === 'heat' ? 'energized (heating)' : 'de-energized (cooling)'} — compressor restarts after pressures equalize.`); }
-  change(`Mode: ${m === 'heat' ? 'heating' : 'cooling'}`);
+  if (!silent) change(`Mode: ${m === 'heat' ? 'heating' : 'cooling'}`);
 }
 $('mCool').addEventListener('click', () => setMode('cool'));
 $('mHeat').addEventListener('click', () => setMode('heat'));
@@ -1781,7 +1871,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.2.2 started at steady state.');
+logEvent('Simulator v1.3.0 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {

@@ -197,6 +197,7 @@ svg text{font-family:var(--f-body)}
 </script>
 <script>
 /*GLOSSARY*/
+/*TESTS*/
 </script>
 <script>
 (function(){
@@ -207,20 +208,6 @@ const PATM = E.PATM, $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /* ---------- configuration ---------- */
-const PRE = {
-  cool: {
-    idAir:   [{t:'80/67 (A, B)', c:{idDB:80,idWB:67}}, {t:'80/57 dry (C, D)', c:{idDB:80,idWB:57}}, {t:'75/63', c:{idDB:75,idWB:63}}],
-    idWater: [{t:'54°F chilled water', w:54}, {t:'60°F', w:60}, {t:'47°F', w:47}],
-    odAir:   [{t:'95°F (A)', c:{odDB:95,odWB:75}}, {t:'82°F (B, C)', c:{odDB:82,odWB:65}}, {t:'105°F', c:{odDB:105,odWB:76}}, {t:'115°F', c:{odDB:115,odWB:78}}, {t:'65°F', c:{odDB:65,odWB:55}}],
-    odWater: [{t:'86°F tower / WLHP', w:86}, {t:'77°F ground loop', w:77}, {t:'59°F groundwater', w:59}, {t:'95°F', w:95}],
-  },
-  heat: {
-    idAir:   [{t:'70/60', c:{idDB:70,idWB:60}}, {t:'65/55', c:{idDB:65,idWB:55}}],
-    idWater: [{t:'104°F fan coil', w:104}, {t:'86°F radiant', w:86}, {t:'120°F', w:120}],
-    odAir:   [{t:'47°F (H1)', c:{odDB:47,odWB:43}}, {t:'35°F (H2)', c:{odDB:35,odWB:33}}, {t:'17°F (H3)', c:{odDB:17,odWB:15}}, {t:'5°F', c:{odDB:5,odWB:4}}, {t:'62°F', c:{odDB:62,odWB:56}}],
-    odWater: [{t:'68°F WLHP', w:68}, {t:'50°F groundwater', w:50}, {t:'32°F ground loop', w:32}],
-  }
-};
 const TONS = [1.5,2,2.5,3,3.5,4,5,7.5,10];
 function defaults(){
   return {refrigerant:'R-410A',tons:3,mode:'cool',chargeMode:'realistic',shTarget:10,scTarget:10,lineLen:25,
@@ -756,7 +743,7 @@ const meterOpts = [['txv','TXV'],['piston','Piston (fixed orifice)'],['eev','EEV
 function buildControls(){
   CTL.length = 0;
   let h = '';
-  h += grp('Test conditions', `<div id="presets"></div>` +
+  h += grp('Test conditions', `<div class="sel" id="w-testSel"><label for="testSel">Standard test point</label><select id="testSel" style="max-width:320px"></select></div><div class="note" id="testNote"></div>` +
     num('idDB','Indoor dry bulb','°F',-30,130,1, () => cfg.cond.idDB, v => { cfg.cond.idDB = v; cfg.cond.idWB = Math.min(cfg.cond.idWB, v); }, {hide: () => idW()}) +
     num('idWB','Indoor wet bulb','°F',-30,130,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB), {hide: () => idW()}) +
     num('idEwt',() => roleOf('id') + ' entering water','°F',-30,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
@@ -819,8 +806,9 @@ function buildControls(){
     num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v));
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
   $('tab-controls').innerHTML = h;
-  // presets
+  // test points
   renderPresets();
+  $('testSel').addEventListener('change', e => applyTest(e.target.value));
   // wire
   for (const c of CTL) {
     const el = $(c.id);
@@ -839,26 +827,48 @@ function buildControls(){
   $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
-function presetGroups(){
-  const P = PRE[cfg.mode];
-  return [
-    [idW() ? roleOf('id') + ' water' : 'Indoor', idW() ? P.idWater : P.idAir, idW() ? 'idWater' : 'idAir'],
-    [odW() ? roleOf('od') + ' water' : 'Outdoor', odW() ? P.odWater : P.odAir, odW() ? 'odWater' : 'odAir'],
-  ];
+function testSets(){ return unitTestSets(idW(), odW(), cfg.tons).map(k => [k, TESTSETS[k]]); }
+function loadSettings(load){
+  const c = cfg.comp, t = c.type;
+  if (load === 'full') return t === 'two' ? {stage:'high'} : t === 'inv' ? {speed:100} : {};
+  if (load === 'low') return t === 'two' ? {stage:'low'} : t === 'inv' ? {speed:40} : {};
+  if (load === 'int') return t === 'inv' ? {speed:70} : t === 'two' ? {stage:'high'} : {};
+  const pct = +load; return t === 'two' ? {stage: pct > 60 ? 'high' : 'low'} : t === 'inv' ? {speed: Math.max(30, pct)} : {};
 }
-function presetOn(kind, p){
-  if (p.c) return Object.keys(p.c).every(k => cfg.cond[k] === p.c[k]);
-  return kind === 'idWater' ? cfg.idWater.ewt === p.w : cfg.water.ewt === p.w;
+function testVisible(t){ if (t.staged && cfg.comp.type === 'single') return false; if (t.variable && cfg.comp.type !== 'inv') return false; return true; }
+function testMatches(t){
+  if (t.mode !== cfg.mode) return false;
+  const near = (a, b) => Math.abs(a - b) < 0.05;
+  const side = (spec, isW, cond, w) => spec.ewt != null ? isW && near(w.ewt, spec.ewt) : !isW && near(cond.db, spec.db) && near(cond.wb, spec.wb);
+  if (!side(t.id, idW(), {db: cfg.cond.idDB, wb: cfg.cond.idWB}, cfg.idWater)) return false;
+  if (!side(t.od, odW(), {db: cfg.cond.odDB, wb: cfg.cond.odWB}, cfg.water)) return false;
+  const ls = loadSettings(t.load); return Object.keys(ls).every(k => cfg.comp[k] === ls[k]);
 }
 function renderPresets(){
-  const el = $('presets'); if (!el) return;
-  el.innerHTML = presetGroups().map(([lbl, list, kind], g) => `<div class="note" style="margin:2px 0 4px">${lbl} presets</div><div class="chips">` +
-    list.map((p,i) => `<button class="chip" data-g="${g}" data-pre="${i}">${esc(p.t)}</button>`).join('') + '</div>').join('');
-  el.querySelectorAll('[data-pre]').forEach(b => b.addEventListener('click', () => {
-    const [lbl, list, kind] = presetGroups()[+b.dataset.g], p = list[+b.dataset.pre];
-    if (p.c) Object.assign(cfg.cond, p.c); else if (kind === 'idWater') cfg.idWater.ewt = p.w; else cfg.water.ewt = p.w;
-    change(`${lbl}: ${p.t}`);
-  }));
+  const sel = $('testSel'); if (!sel) return;
+  let h = '<option value="">Custom conditions</option>', cur = '';
+  for (const [key, set] of testSets()) {
+    h += `<optgroup label="${esc(set.title)}">`;
+    for (const t of set.tests) { if (!testVisible(t)) continue; const v = key + ':' + t.k; if (testMatches(t) && (v === cfg.lastTest || (!cur && t.k !== 'BI'))) cur = v; h += `<option value="${v}">${esc(t.name)}</option>`; }
+    h += '</optgroup>';
+  }
+  sel.innerHTML = h; sel.value = cur;
+  const t = cur ? TESTSETS[cur.split(':')[0]].tests.find(x => x.k === cur.split(':')[1]) : null;
+  const sets = testSets().map(([,s]) => s.title.split(' — ')[0]).join(' / ');
+  const desc = sp => sp.ewt != null ? `${sp.ewt}°F entering water${sp.gpm ? ` at ${sp.gpm} gpm/ton` : ''}` : `${sp.db}/${sp.wb}°F db/wb`;
+  $('testNote').innerHTML = t ? `<b>${esc(t.name)}</b> (${t.mode === 'heat' ? 'heating' : 'cooling'}): indoor ${desc(t.id)}, outdoor ${desc(t.od)}${t.load === 'full' ? '' : `, ${typeof t.load === 'number' ? t.load + '% load' : t.load === 'low' ? 'low capacity' : 'intermediate speed'}`}.${t.note ? ' ' + esc(t.note) : ''}`
+    : `This unit is tested to ${esc(sets)}. Pick a standard point, or set conditions by hand below.`;
+}
+function applyTest(v){
+  if (!v) return;
+  const [key, k] = v.split(':'), t = TESTSETS[key].tests.find(x => x.k === k); if (!t) return;
+  if (t.mode !== cfg.mode) setMode(t.mode, true);
+  if (t.id.ewt != null) { cfg.idWater.ewt = t.id.ewt; if (t.id.gpm) cfg.idWater.gpm = Math.round(t.id.gpm * cfg.tons * 2) / 2; } else { cfg.cond.idDB = t.id.db; cfg.cond.idWB = t.id.wb; }
+  if (t.od.ewt != null) { cfg.water.ewt = t.od.ewt; if (t.od.gpm) cfg.water.gpm = Math.round(t.od.gpm * cfg.tons * 2) / 2; } else { cfg.cond.odDB = t.od.db; cfg.cond.odWB = t.od.wb; }
+  Object.assign(cfg.comp, loadSettings(t.load));
+  cfg.lastTest = v;
+  if (k === 'BI') logEvent('Break-in run started at ' + t.name.toLowerCase() + ' conditions.');
+  change(`Test point: ${TESTSETS[key].title.split(' — ')[0]} ${t.name}`);
 }
 function applyCtl(c, v){
   if (c.type === 'num') {
@@ -892,8 +902,6 @@ function syncControls(){
   const fn = $('fzNote'); if (fn) fn.textContent = (idW() || odW()) ? `Freeze protection stops the compressor when a water loop's leaving fluid falls to the cut-out, and resets 10°F above it. Typical cut-out: 38°F for water, about 8°F above the freeze point for glycol (${E.WFLUID[cfg.water.fluid||'water'].name}: ${fzDefault(cfg.water.fluid)}°F).` : '';
   const an = $('airNote'); if (an) an.textContent = idW() && odW() ? 'No air side on this unit — both heat exchangers are water-to-refrigerant.' : idW() ? 'Indoor side is a water loop, so there is no blower. Outdoor fan airflow still applies.' : 'PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.';
   renderPresets();
-  const PG = presetGroups();
-  document.querySelectorAll('#presets .chip').forEach(b => { const [, list, kind] = PG[+b.dataset.g]; b.classList.toggle('on', presetOn(kind, list[+b.dataset.pre])); });
 }
 
 /* ---------- readings & electrical & P-h ---------- */
@@ -1037,7 +1045,7 @@ function change(what, big){
 function renderAll(){ renderSchemStatic(); updateSchemLive(); renderProbe(); renderAlerts(); renderReadings(); renderElec(); drawPH(); renderTiles(); renderStatus(); }
 
 /* ---------- wiring ---------- */
-function setMode(m){
+function setMode(m, silent){
   if (cfg.mode === m) return;
   const sc = cfg.savedCond; sc[cfg.mode] = Object.assign({}, cfg.cond, {ewt: cfg.water.ewt, idEwt: cfg.idWater.ewt});
   cfg.mode = m; const n = sc[m]; cfg.cond = {idDB:n.idDB, idWB:n.idWB, odDB:n.odDB, odWB:n.odWB}; cfg.water.ewt = n.ewt; cfg.idWater.ewt = n.idEwt;
@@ -1045,7 +1053,7 @@ function setMode(m){
   renderPresets();
   lastX = null;
   if (S.comp) { S.comp = false; S.asc = Math.min(cfg.sw.asc, 30); logEvent(`Reversing valve ${m === 'heat' ? 'energized (heating)' : 'de-energized (cooling)'} — compressor restarts after pressures equalize.`); }
-  change(`Mode: ${m === 'heat' ? 'heating' : 'cooling'}`);
+  if (!silent) change(`Mode: ${m === 'heat' ? 'heating' : 'cooling'}`);
 }
 $('mCool').addEventListener('click', () => setMode('cool'));
 $('mHeat').addEventListener('click', () => setMode('heat'));

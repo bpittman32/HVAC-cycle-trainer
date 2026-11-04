@@ -135,6 +135,7 @@ const GLOSSARY = {
   'outdoor wet bulb': 'Outdoor wet bulb — matters for frost in heating.',
   'entering water': 'Water or glycol temperature entering this heat exchanger.',
   'freeze cut-out (leaving fluid)': 'Freeze protection trips the compressor if leaving fluid falls to this temperature.',
+  'standard test point': 'Rating and performance test conditions from the standard this unit type is tested to. Choosing one sets the mode, indoor and outdoor conditions, water temperatures and flows, and compressor stage or speed. Break-in runs the unit at its rating conditions before testing.',
   'freeze protection': 'Stops the compressor when a water loop gets too cold.',
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',

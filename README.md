@@ -16,6 +16,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - Indoor and outdoor heat exchangers: tube-and-fin or microchannel (air), coaxial, shell-and-tube or brazed plate (water). Any combination works: air-to-air, water-source, air-to-water, water-to-water. The schematic redraws to match.
 - Water loops on either side, named by role (condenser or evaporator), with adjustable flow, entering temperature and fluid (water, propylene or ethylene glycol 20/30/40%), freeze protection cut-outs and freeze-point warnings
 - ECM or PSC blower with duct static
+- Standard test points chosen to match the unit: AHRI 210/240 or 340/360 (air-source), ISO 13256-1 (water-to-air), ISO 13256-2 and AHRI 550/590 water-cooled (water-to-water), AHRI 550/590 air-cooled (air-to-water); includes break-in, rating, part-load and maximum/low-temperature operating points
 - High/low pressure switches with trips, anti-short-cycle and lockout
 - Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart
@@ -29,6 +30,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 | `src/app.html` | Interface template |
 | `src/props.json` | Refrigerant property tables |
 | `src/glossary.js` | Hover explanations for every reading and setting |
+| `src/tests.js` | Standard test points for each unit type |
 | `tools/props.py` | Regenerates `props.json` (Peng-Robinson EOS fitted to PT charts; needs numpy + scipy) |
 | `tools/build.py` | Inlines engine and tables into `index.html` |
 
