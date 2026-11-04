@@ -346,6 +346,7 @@ function buildVM(r){
   const v = {
     lowP, highP, Tsuc, Tliq, Tdis: r.disSt.T, Pd: r.Pd, Ps: r.Ps,
     SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(Pliq) - Tliq,
+    liq: (() => { const st = F_.state(r.Ps, r.h1); return st.phase === 'vap' ? 0 : st.phase === 'liq' ? 100 : (1 - st.x) * 100; })(),
     SHevap: r.ze, amps: e.comp.A, Q: Qwant, kw: e.totalW / 1000,
     COP: Qwant / (e.totalW * 3.412), m: r.m,
     supply: a.indoor.kind === 'air' ? a.indoor.out.db : a.indoor.tout,
@@ -422,10 +423,10 @@ function step(dt){
 /* ---------- tiles ---------- */
 const TILES = [
   {k:'lowP', l:'Low side', c:'var(--suct)', v: d => fmtPv(d.lowP), s: d => `sat ${f1(F().tDew(d.lowP))}°F dew`, dd: 'lowP', unitDelta: 'psi'},
-  {k:'SH', l:'SH', c:'var(--suct)', v: d => S.comp && isFinite(d.SH) ? [f1(d.SH),'°F'] : ['—',''], s: d => `suction ${f1(d.Tsuc)}°F`, dd: 'SH', unitDelta:'°'},
+  {k:'SH', l:'SH', c:'var(--suct)', v: d => S.comp && isFinite(d.SH) ? [f1(d.SH),'°F'] : ['—',''], s: d => S.comp && d.liq >= 1 ? `${f0(d.liq)}% liquid back` : `suction ${f1(d.Tsuc)}°F`, dd: 'SH', unitDelta:'°'},
   {k:'highP', l:'High side', c:'var(--hot)', v: d => fmtPv(d.highP), s: d => `sat ${f1(F().tBub(d.highP))}°F bub`, dd:'highP', unitDelta:'psi'},
   {k:'SC', l:'SC', c:'var(--liq)', v: d => S.comp && isFinite(d.SC) ? [f1(d.SC),'°F'] : ['—',''], s: d => `liquid ${f1(d.Tliq)}°F`, dd:'SC', unitDelta:'°'},
-  {k:'Tdis', l:'Dis. temp', c:'var(--hot)', v: d => [f0(d.Tdis),'°F'], s: d => d.Tdis > 250 ? 'too hot' : d.Tdis > 225 ? 'running hot' : 'line temp', dd:'Tdis', unitDelta:'°'},
+  {k:'Tdis', l:'Dis. temp', c:'var(--hot)', v: d => [f0(d.Tdis),'°F'], s: d => { if (!S.comp) return 'line temp'; const dsh = d.Tdis - F().tDew(d.Pd); return d.Tdis > 250 ? 'too hot' : d.Tdis > 225 ? 'running hot' : dsh < 30 ? `DSH ${f0(dsh)}° — liquid risk` : `DSH ${f0(dsh)}°F`; }, dd:'Tdis', unitDelta:'°'},
   {k:'amps', l:'Amps', c:'var(--accent)', v: d => [f1(d.amps),'A'], s: d => `RLA ${cfg.matched.RLA}`, dd:'amps', unitDelta:'A'},
   {k:'Q', l: () => cfg.mode === 'heat' ? 'Heating' : 'Cooling', c:'var(--good)', v: d => [(d.Q/1000).toFixed(1),'kBtu/h'], s: d => `${(d.Q/12000).toFixed(2)} tons`, dd:'Q', unitDelta:'k', scale: 1/1000},
   {k:'COP', l:'COP', c:'var(--good)', v: d => [S.comp ? d.COP.toFixed(2) : '—',''], s: d => S.comp ? `EER ${(d.COP*3.412).toFixed(1)} · ${d.kw.toFixed(2)} kW` : `${d.kw.toFixed(2)} kW`, dd:'COP', unitDelta:''},
@@ -591,7 +592,9 @@ function renderSchemStatic(){
   const heat = res.ctx.heat, on = S.comp, r = res;
   for (const k in SEG) {
     const sg = SEG[k];
-    let col = on ? COL[heat ? sg.heat : sg.cool] : COL.off;
+    let ty = heat ? sg.heat : sg.cool;
+    if (ty === 'lv' && on && r.ze < 0 && !r.ctx.compRev) ty = 'lmix';      // floodback: the suction line carries liquid too
+    let col = on ? COL[ty] : COL.off;
     $('seg-' + k).setAttribute('stroke', col);
     $('seg-' + k).setAttribute('stroke-dasharray', on && r.upSt.phase === '2ph' && ((!heat && (k==='ll'||k==='msv'||k==='odm')) || (heat && (k==='ll'||k==='msv'||k==='idm'))) ? '5 2' : '');
     const fl = $('flow-' + k);
@@ -751,6 +754,7 @@ function renderAlerts(){
   if (g(r.Ps) < 0) A.push(['bad', `Suction is in a vacuum (${fmtP(r.Ps)}).`]);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves it ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback to the compressor.`]);
+  if (r.ze < 0) A.push(['info', `With liquid in the suction line the gauge superheat sits at saturation — about ${(v => Math.abs(v) < 0.05 ? '0.0' : f1(v))(Math.min(0, F().state(r.Ps, r.h1).T - F().tDew(r.Ps)))}°F on ${cfg.refrigerant}${F().tDew(r.Ps) - F().tBub(r.Ps) > 1.5 ? ' (negative because of temperature glide)' : ''} — no matter how much liquid is coming back. Watch discharge superheat instead: it falls toward zero as floodback gets worse.`]);
   if (r.ze < 0 && cfg.comp.type === 'recip') A.push(['bad', 'Reciprocating compressors cannot compress liquid — floodback here risks broken valves and connecting rods (liquid slugging).']);
   if (cfg.comp.type === 'recip' && r.PR > 7) A.push(['warn', `Compression ratio ${r.PR.toFixed(1)} is high for a reciprocating compressor — re-expansion from the clearance volume is cutting its pumping (volumetric efficiency ${(r.etaV*100).toFixed(0)}%).`]);
   if (cfg.comp.type === 'screw' && (cfg.comp.slide ?? 100) < 50) A.push(['info', `Screw slide valve at ${cfg.comp.slide}% — part-load efficiency of a slide valve falls off well below the inverter's.`]);
@@ -835,7 +839,7 @@ function buildControls(){
     sel('tons','Nominal size', TONS.map(t => [t, t + ' ton']), () => cfg.tons, v => { cfg.tons = +v; rematch(`Resized to ${v} tons and re-matched.`); }) +
     sel('cmode','Charging mode', [['realistic','Realistic — set charge & metering'],['sandbox','Sandbox — set SH/SC targets']], () => cfg.chargeMode, v => cfg.chargeMode = v) +
     num('charge','Refrigerant charge','lb',1,40,0.25, () => cfg.charge, v => cfg.charge = v, {hide: () => cfg.chargeMode !== 'realistic', minmax: () => [Math.max(0.5, cfg.matched.charge*0.3), cfg.matched.charge*1.8]}) +
-    num('shT','Target superheat','°F',0,40,0.5, () => cfg.shTarget, v => cfg.shTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
+    num('shT','Target superheat','°F',-15,40,0.5, () => cfg.shTarget, v => cfg.shTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
     num('scT','Target subcooling','°F',0,40,0.5, () => cfg.scTarget, v => cfg.scTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
     num('lineLen','Line set length','ft',10,150,5, () => cfg.lineLen, v => cfg.lineLen = v) +
     `<div class="note" id="chargeNote"></div><button class="btn" id="rematchBtn">Re-match system (factory charge & metering)</button>`, true);
