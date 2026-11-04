@@ -50,7 +50,9 @@ h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;
 .tile.flash{animation:pulse 1.2s ease 2}
 @keyframes pulse{50%{border-color:var(--accent)}}
 .d.up{background:rgba(255,95,69,.18);color:#ff9a87}.d.dn{background:rgba(74,167,255,.18);color:#8cc8ff}
-.settle{font-size:12px;color:var(--warn);font-family:var(--f-num);margin-top:4px;min-height:16px}
+.settle{font-size:13px;font-family:var(--f-num);min-height:20px;margin:0 0 8px;padding:6px 10px;border-radius:8px;background:var(--panel2);border-left:3px solid var(--line);color:var(--muted)}
+.settle.moving{border-left-color:var(--warn);color:var(--warn)}
+.settle.steady{border-left-color:var(--good);color:var(--good)}
 
 /* layout */
 .grid{display:grid;gap:12px}
@@ -170,20 +172,19 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.5.1</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.5.2</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
 
 <div class="strip">
   <div class="tiles" id="tiles"></div>
-  <div class="settle" id="settle"></div>
 </div>
 
 <div class="grid">
 <div id="leftCol">
   <div class="card">
-    <h2 class="long">System — click a numbered port or a part to measure it</h2>
+    <div class="settle" id="settle" role="status" aria-live="polite"></div>
     <svg class="schem" id="schem" viewBox="0 0 400 300" role="img" aria-label="Split heat pump schematic"></svg>
     <div class="legend"><span><i style="background:var(--hot)"></i>Hot gas</span><span><i style="background:var(--liq)"></i>Liquid</span><span><i style="background:var(--mix)"></i>Low-side mixture</span><span><i style="background:var(--suct)"></i>Suction vapor</span><span><i style="background:repeating-linear-gradient(90deg,var(--liq) 0 3px,#fff 3px 5px)"></i>Flash gas</span></div>
     <div class="alerts" id="alerts"></div>
@@ -1238,7 +1239,8 @@ function renderTiles(){
     el.children[2].textContent = t.s(disp);
   }
   const unsettled = S.comp && ['lowP','highP','Tdis','SH'].some(k => isFinite(VM[k]) && Math.abs(disp[k] - VM[k]) > (k.endsWith('P') ? 2 : 1));
-  $('settle').textContent = unsettled ? 'Settling — readings are still moving toward steady state. Wait for stable conditions before recording.' : (S.comp ? 'Stable.' : '');
+  const st = $('settle'); st.textContent = unsettled ? 'Settling — readings are still moving. Wait for stable conditions before recording.' : S.comp ? 'Stable — readings are steady.' : 'Compressor off.';
+  st.className = 'settle ' + (unsettled ? 'moving' : S.comp ? 'steady' : '');
 }
 let flashTimer = null;
 function flashDeltas(prev, cur){
@@ -2113,7 +2115,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.5.1 started at steady state.');
+logEvent('Simulator v1.5.2 started at steady state.');
 histRecord(S.t, disp, true);
 setupTrendsTab();
 renderAll();
