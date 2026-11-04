@@ -94,6 +94,7 @@ const GLOSSARY = {
   'evaporator exit': 'Condition leaving the evaporator. A vapor percentage means liquid is leaving the coil.',
   'holding liquid': 'Whether the accumulator is catching liquid floodback.',
   'status': 'What the accumulator is doing: empty, filling, holding steady, draining back, full and overflowing, or holding liquid with no flow.',
+  'inrush at last start': 'Current spike in the first fraction of a second after the contactor closes, before the motor comes up to speed — about locked-rotor amps (LRA). Catch it with a clamp meter set to inrush/peak. Inverter drives soft-start, so they have none.',
   'liquid level': 'How full of liquid refrigerant the accumulator shell is, and the weight held. On a real unit the shell sweats or frosts up to about this level.',
   'liquid arriving': 'Liquid refrigerant flowing into the accumulator from a flooded evaporator, pounds per hour.',
   'returned by bleed hole': 'Liquid (and oil) metered back to the compressor through the small hole at the bottom of the J-tube. It returns faster as the level rises.',

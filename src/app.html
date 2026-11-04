@@ -375,13 +375,14 @@ function offVM(){
 const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, tRun: 999, t: 0, speed: 1, accM: 0, accIn: 0, accBleed: 0, accOver: 0, accState: 'dry' };
 let disp = null, logRows = [];
 function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60); logRows.unshift({t: `${m}:${String(s).padStart(2,'0')}`, msg, kind}); if (logRows.length > 60) logRows.pop(); renderLog(); }
-function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k === 'Tdis') return 120; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
+function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 1.5; if (k === 'Tdis') return 120; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
 function trip(kind, why){ S.comp = false; S.trip = kind; S.tripWhy = why; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
   if (S.trips >= cfg.sw.maxTrips) { S.lock = true; logEvent(`Control LOCKOUT after ${S.trips} trips. Find the cause, then press Reset control.`, 'bad'); } }
 function tick(dtReal){        // physics in sub-steps of at most 0.5 s so fast-forward doesn't alias pulses or lags
   const tot = dtReal * S.speed, n = Math.max(1, Math.ceil(tot / 0.5));
   for (let i = 0; i < n; i++) step(tot / n);
   renderTiles(); renderStatus(); updateSchemLive();
+  if (S.inrush && S.tRun > 0.2) S.inrush = false;     // the locked-rotor spike shows for one screen update
 }
 /* Suction accumulator: liquid from a flooded evaporator collects in the shell. It leaves through the oil-return
    (bleed) hole at the bottom of the J-tube, faster as the level rises, and a little boils off from shell heat.
@@ -410,7 +411,7 @@ function step(dt){
   if (S.trip === 'FRZ') { const t = S.tripSide === 'id' ? disp.lwtId : disp.lwtOd, co = S.tripSide === 'id' ? sw.fzId : sw.fzOd;
     if (!(idW() || odW()) || sw.fzOn === false || !isFinite(t) || t >= co + 10) { logEvent('Freeze protection reset — loop temperature recovered.'); S.trip = null; } }
   const want = S.call && !S.lock && !S.trip;
-  if (!S.comp && want && S.asc <= 0) { S.comp = true; S.tRun = 0; logEvent('Compressor started.'); }
+  if (!S.comp && want && S.asc <= 0) { S.comp = true; S.tRun = 0; S.inrush = true; logEvent('Compressor started.'); }
   if (S.comp && !want) { S.comp = false; S.asc = sw.asc; logEvent('Thermostat satisfied / call removed — compressor off.'); }
   if (S.comp) {
     S.tRun += dt;
@@ -463,6 +464,19 @@ function step(dt){
     if (!isFinite(b)) { disp[k] = a; continue; }
     disp[k] = b + (a - b) * (1 - Math.exp(-dt / tau(k)));
   }
+  // Compressor current has no lag of its own: it drops to zero the instant the contactor opens, spikes to
+  // locked-rotor amps for a fraction of a second on start, then follows the load as head pressure builds.
+  if (!S.comp) { disp.amps = 0; disp.kw = tgt.kw; }
+  else {
+    const lift = tgt.Pd - tgt.Ps, now = disp.Pd - disp.Ps;
+    const f = lift > 1 ? Math.min(1.15, Math.max(0, now / lift)) : 1;
+    let A = tgt.amps * (0.5 + 0.5 * f);
+    if (isDrive()) A *= Math.min(1, 0.2 + S.tRun / 15);                  // inverter soft-starts: no inrush, ramps up
+    const ce = elecRes.comp, share = tgt.amps > 0.05 ? A / tgt.amps : 1;
+    disp.kw = Math.max(0, tgt.kw - (ce.W / 1000) * (1 - share));
+    disp.amps = A;
+    if (S.inrush && !isDrive()) { disp.amps = ce.LRA || 5.2 * cfg.matched.RLA; S.lastInrush = disp.amps; }
+  }
   histRecord(S.t, disp);
 }
 
@@ -493,12 +507,13 @@ function renderTiles(){
     if (S.tRun < 60 || n < 2 || HIST.t[0] > tNow - 60) worst = {label: 'Unit just started', d: null};
     else {
       let i0 = n - 1; while (i0 > 0 && HIST.t[i0 - 1] >= tNow - 60) i0--;
-      for (const [k, lbl, tol, u] of STAB) {
+      for (let [k, lbl, tol, u] of STAB) {
         const a = HIST.v[k] || []; let lo = Infinity, hi = -Infinity;
         if (pulse) {      // digital scroll: judge the 15-second averages, not the pulses
           for (let b = 0; b < 4; b++) { let sum = 0, cnt = 0; for (let i = i0; i < n; i++) { const tb = Math.floor((tNow - HIST.t[i]) / 15); if (tb === b && isFinite(a[i])) { sum += a[i]; cnt++; } } if (cnt) { const m = sum / cnt; lo = Math.min(lo, m); hi = Math.max(hi, m); } }
         } else
         for (let i = i0; i < n; i++) if (isFinite(a[i])) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
+        if (pulse && k === 'amps') tol = 0.5;      // 1-second samples of a 15-second pulse don't average perfectly
         if (isFinite(lo) && hi - lo > tol && (!worst || (hi - lo) / tol > worst.r)) worst = {label: lbl, d: hi - lo, u, r: (hi - lo) / tol, tol};
       }
     }
@@ -718,7 +733,7 @@ function renderProbe(){
       const c = e.comp;
       h = `<h3>Compressor · ${E.COMP[c.type].name.toLowerCase()}</h3>` + kv([
         ...(c.three && !isDrive() ? [['L1 amps', on ? f1(disp.amps) + ' A' : '0 A'], ['L2 amps', on ? f1(disp.amps * 1.01) + ' A' : '0 A'], ['L3 amps', on ? f1(disp.amps * 0.99) + ' A' : '0 A']] : [['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A']]), !isDrive() && !c.three && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], !isDrive() && !c.three && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
-        ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`],
+        ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`], !isDrive() && S.lastInrush && ['Inrush at last start', f1(S.lastInrush) + ' A'], isDrive() && ['Inrush at last start', 'none — soft start'],
         isDrive() && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
         cfg.comp.type === 'screw' && ['Slide valve', `${cfg.comp.slide ?? 100}% loaded`],
         cfg.comp.type === 'digital' && ['Digital duty', on ? `${cfg.comp.duty ?? 100}% · ${pulseLoaded() ? 'LOADED' : 'unloaded'}` : '—'],
