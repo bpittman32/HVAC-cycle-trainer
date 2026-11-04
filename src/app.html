@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heat Pump Cycle Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Instrument-panel world: slate housing, brass accent, refrigerant state colours. Layout: pinned gauge strip, schematic, tabbed bench below. */
+  --bg:#0e1317; --panel:#151c22; --panel2:#1b242c; --line:#2a3640; --ink:#e7edf1; --muted:#8c9ba7; --accent:#f0bf4c;
+  --hot:#ff5f45; --cond:#ff8f3d; --liq:#ffb43d; --mix:#a98bff; --suct:#4aa7ff; --off:#4b5863;
+  --good:#3fcf8e; --warn:#f0bf4c; --bad:#ff5f45;
+  --f-disp:"Barlow Condensed","Arial Narrow",sans-serif; --f-body:"Barlow",system-ui,sans-serif; --f-num:"IBM Plex Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.4}
+button,select,input{font:inherit;color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:0 12px 60px}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 0 8px}
+h1{font-family:var(--f-disp);font-weight:700;font-size:20px;letter-spacing:.04em;text-transform:uppercase;margin:0;flex:1;min-width:160px;text-wrap:balance}
+h1 small{display:block;font-family:var(--f-body);font-weight:500;font-size:12px;letter-spacing:0;text-transform:none;color:var(--muted)}
+.seg{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{background:none;border:0;padding:6px 12px;border-radius:7px;cursor:pointer;color:var(--muted);font-weight:600;font-size:14px}
+.seg button.on{background:var(--accent);color:#1a1405}
+.seg button:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;cursor:pointer;font-weight:600;font-size:14px}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:#1a1405;border-color:var(--accent)}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+.status{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.pill{font-family:var(--f-disp);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:13px;padding:3px 9px;border-radius:99px;border:1px solid currentColor}
+.pill.run{color:var(--good)}.pill.trip{color:var(--bad)}.pill.wait{color:var(--warn)}.pill.idle{color:var(--muted)}
+.clock{font-family:var(--f-num);color:var(--muted);font-size:12px}
+
+/* gauge strip */
+.strip{position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg) 85%,transparent);padding:6px 0 10px;margin:0 -2px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+@media(min-width:820px){.tiles{grid-template-columns:repeat(8,1fr)}}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;position:relative;min-width:0;border-top:3px solid var(--tc,var(--line))}
+.tile .k{font-family:var(--f-disp);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .v{font-family:var(--f-num);font-weight:600;font-size:clamp(16px,4.4vw,19px);font-variant-numeric:tabular-nums;line-height:1.15;white-space:nowrap}
+.tile .v u{text-decoration:none;font-size:11px;color:var(--muted);font-weight:500;margin-left:2px}
+.tile .s{font-family:var(--f-num);font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .d{position:absolute;top:4px;right:6px;font-family:var(--f-num);font-size:11px;font-weight:600;padding:0 4px;border-radius:4px;opacity:0;transition:opacity .4s}
+.tile.flash .d{opacity:1}
+.tile.flash{animation:pulse 1.2s ease 2}
+@keyframes pulse{50%{border-color:var(--accent)}}
+.d.up{background:rgba(255,95,69,.18);color:#ff9a87}.d.dn{background:rgba(74,167,255,.18);color:#8cc8ff}
+.settle{font-size:12px;color:var(--warn);font-family:var(--f-num);margin-top:4px;min-height:16px}
+
+/* layout */
+.grid{display:grid;gap:12px}
+@media(min-width:980px){.grid{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);align-items:start}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+.card h2{font-family:var(--f-disp);font-size:15px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px;color:var(--muted);font-weight:600}
+.schem{width:100%;height:auto;display:block;touch-action:manipulation}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.alerts{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.alert{border-left:3px solid var(--warn);background:var(--panel2);padding:6px 10px;border-radius:6px;font-size:13px}
+.alert.bad{border-color:var(--bad)}.alert.info{border-color:var(--suct)}
+.probe{margin-top:10px;background:var(--panel2);border-radius:10px;padding:10px;border:1px solid var(--line)}
+.probe h3{margin:0 0 6px;font-family:var(--f-disp);font-size:17px;letter-spacing:.03em}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px}
+@media(min-width:520px){.kv{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.kv div{display:flex;justify-content:space-between;gap:6px;border-bottom:1px dashed var(--line);padding:3px 0;font-size:13px}
+.kv b{font-family:var(--f-num);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kv span{color:var(--muted)}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+.changes{font-size:13px}
+.changes .head{color:var(--accent);font-weight:600;margin-bottom:4px}
+.changes ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:3px 12px}
+.changes li{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding:2px 0}
+.changes li b{font-family:var(--f-num);font-weight:500}
+.changes .up{color:#ff9a87}.changes .dn{color:#8cc8ff}
+
+/* tabs */
+.tabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 10px;cursor:pointer;color:var(--muted);font-family:var(--f-disp);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:14px;white-space:nowrap}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+.pane{display:none}.pane.on{display:block}
+details.grp{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel2)}
+details.grp>summary{cursor:pointer;padding:10px 12px;font-family:var(--f-disp);font-weight:600;letter-spacing:.05em;text-transform:uppercase;font-size:14px;list-style:none;display:flex;justify-content:space-between}
+details.grp>summary::after{content:"+";color:var(--muted)}
+details.grp[open]>summary::after{content:"–"}
+.grpb{padding:2px 12px 12px;display:grid;gap:10px}
+.row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center}
+.row label{font-size:14px}
+.row .val{display:flex;align-items:center;gap:4px}
+.row .val input[type=number]{width:74px;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-family:var(--f-num);text-align:right}
+.row .val em{font-style:normal;color:var(--muted);font-size:12px;min-width:30px}
+.row input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--accent);height:26px}
+.step{width:30px;height:30px;border-radius:7px;border:1px solid var(--line);background:var(--bg);cursor:pointer;font-weight:700}
+.sel{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
+.sel select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;max-width:190px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--bg);border-radius:99px;padding:5px 10px;font-size:13px;cursor:pointer}
+.chip.on{border-color:var(--accent);color:var(--accent)}
+.note{font-size:12px;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+.tw{overflow-x:auto}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th{font-family:var(--f-disp);font-weight:600;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;font-size:12px}
+td:first-child,th:first-child{text-align:left}
+td.n{font-family:var(--f-num)}
+.dot{display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);font-family:var(--f-num);font-size:11px;text-align:center;line-height:16px;margin-right:6px}
+canvas{width:100%;display:block;background:var(--panel2);border-radius:10px}
+.bar{height:10px;border-radius:5px;background:var(--bg);overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.mini{display:grid;grid-template-columns:110px 1fr 60px;gap:6px;align-items:center;font-size:13px;margin:4px 0}
+.mini b{font-family:var(--f-num);font-weight:500;text-align:right}
+.flow{stroke-dasharray:3 9;animation:flow var(--dur,1.4s) linear infinite}
+.flow.rev{animation-direction:reverse}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.spin{transform-box:fill-box;transform-origin:center;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.flow,.spin,.tile.flash{animation:none}}
+.tp{cursor:pointer}
+.tp circle{fill:var(--bg);stroke:var(--accent);stroke-width:1.5}
+.tp text{fill:var(--accent);font-family:var(--f-num);font-size:9px;font-weight:600}
+.tp.sel circle{fill:var(--accent)}.tp.sel text{fill:#1a1405}
+.comp{cursor:pointer}
+.comp.sel>*:first-child{stroke:var(--accent)!important;stroke-width:2.5!important}
+svg text{font-family:var(--f-body)}
+.foot{color:var(--muted);font-size:12px;margin-top:16px;max-width:75ch}
+
+/* ---------- phone layout ---------- */
+.mini-line,.bnav,.toast,.logbox{display:none}
+@media (max-width:819px){
+  .wrap{padding:0 10px calc(74px + env(safe-area-inset-bottom))}
+  header{padding:8px 0 4px;gap:8px;flex-wrap:nowrap}
+  h1{font-size:15px;min-width:0;white-space:nowrap}
+  h1{display:none}
+  header{justify-content:space-between}
+  .tile .d{top:auto;bottom:3px;right:4px;font-size:10px}
+  h1 small{display:none}
+  .seg button{padding:5px 9px;font-size:13px}
+  #callBtn{padding:5px 9px;font-size:13px}
+  .status{gap:6px}
+  .status .clock#clock{display:none}
+  .strip{padding:4px 0 6px}
+  .tiles{grid-template-columns:repeat(4,1fr);gap:5px}
+  .tile{padding:4px 6px 5px}
+  .tile:nth-child(n+5){display:none}
+  .tile .s{display:none}
+  .mini-line{display:flex;justify-content:space-between;gap:6px;font-family:var(--f-num);font-size:12px;color:var(--muted);padding:5px 2px 0;white-space:nowrap;overflow:hidden}
+  .mini-line b{color:var(--ink);font-weight:500}
+  .settle{font-size:11px;min-height:0;margin-top:2px}
+  .grid{display:block}
+  .card{padding:10px;border-radius:12px}
+  .card h2.long{display:none}
+  .legend{display:none}
+  .tabs{display:none}
+  #changes{display:none}
+  .foot{display:none}
+  body[data-view="system"] #rightCard{display:none}
+  body:not([data-view="system"]) #leftCol{display:none}
+  .kv{grid-template-columns:1fr 1fr;gap:2px 10px}
+  .kv.clip div:nth-child(n+7){display:none}
+  .probe .more{display:inline-block}
+  .logbox{display:block;margin-top:10px}
+  .bnav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--panel);border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom))}
+  .bnav button{background:none;border:0;color:var(--muted);padding:6px 0 4px;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:var(--f-disp);font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
+  .bnav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .bnav button.on{color:var(--accent)}
+  .toast{display:block;position:fixed;left:10px;right:10px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:39;background:var(--panel2);border:1px solid var(--accent);border-radius:12px;padding:8px 10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5);transform:translateY(calc(100% + 120px));visibility:hidden;transition:transform .25s ease,visibility .25s;pointer-events:none}
+  .toast.show{transform:none;visibility:visible;pointer-events:auto}
+  .toast .head{color:var(--accent);font-weight:600;margin-bottom:3px}
+  .toast ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px}
+  .toast li{display:flex;justify-content:space-between;gap:6px}
+  .toast li b{font-family:var(--f-num);font-weight:500}
+  .toast .up{color:#ff9a87}.toast .dn{color:#8cc8ff}
+  .alerts .alert{padding:5px 8px;font-size:12px}
+}
+.more{display:none;margin-top:6px;background:none;border:0;color:var(--accent);font-weight:600;font-size:13px;padding:4px 0;cursor:pointer}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1><span class="tl">Heat Pump </span>Cycle Trainer<small id="subtitle">Split system · R-410A · 3 ton</small></h1>
+  <div class="seg" role="group" aria-label="Mode"><button id="mCool" class="on">Cooling</button><button id="mHeat">Heating</button></div>
+  <button class="btn" id="callBtn">Thermostat: ON</button>
+</header>
+<div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
+  <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
+  <button class="btn" id="resetCtl" style="display:none">Reset control</button>
+</div>
+
+<div class="strip">
+  <div class="tiles" id="tiles"></div>
+  <div class="mini-line" id="miniLine"></div>
+  <div class="settle" id="settle"></div>
+</div>
+
+<div class="grid">
+<div id="leftCol">
+  <div class="card">
+    <h2 class="long">System — tap a numbered port or a part to measure it</h2>
+    <svg class="schem" id="schem" viewBox="0 0 400 300" role="img" aria-label="Split heat pump schematic"></svg>
+    <div class="legend"><span><i style="background:var(--hot)"></i>Hot gas</span><span><i style="background:var(--liq)"></i>Liquid</span><span><i style="background:var(--mix)"></i>Low-side mixture</span><span><i style="background:var(--suct)"></i>Suction vapor</span><span><i style="background:repeating-linear-gradient(90deg,var(--liq) 0 3px,#fff 3px 5px)"></i>Flash gas</span></div>
+    <div class="alerts" id="alerts"></div>
+    <div class="probe" id="probe"></div>
+    <details class="grp logbox" id="logboxD"><summary>Event log</summary><div class="grpb" id="logbox"></div></details>
+  </div>
+  <div class="card changes" id="changes" style="margin-top:12px"><h2>What changed</h2><div class="note">Adjust anything. Every reading that moves is listed here and flagged on the gauges above, so you can see both sides of the system react together.</div></div>
+</div>
+
+<div class="card" id="rightCard">
+  <div class="tabs" role="tablist">
+    <button class="on" data-tab="controls">Controls</button><button data-tab="readings">Readings</button><button data-tab="ph">P-h chart</button><button data-tab="elec">Electrical</button><button data-tab="log">Log</button>
+  </div>
+  <div class="pane on" id="tab-controls"></div>
+  <div class="pane" id="tab-readings"></div>
+  <div class="pane" id="tab-ph"><canvas id="ph" height="360"></canvas><p class="hint">Log pressure vs enthalpy. Dome from the selected refrigerant's property tables; the cycle is drawn from the current operating point. Numbers match the ports on the schematic.</p></div>
+  <div class="pane" id="tab-elec"></div>
+  <div class="pane" id="tab-log"></div>
+</div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<nav class="bnav" aria-label="Views">
+  <button data-view="system" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="14" y="5" width="7" height="14" rx="2"/><path d="M11 9h3M11 15h3"/></svg>System</button>
+  <button data-view="controls"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Adjust</button>
+  <button data-view="readings"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"/><path d="M12 13l4-3M9 3h6"/></svg>Readings</button>
+  <button data-view="elec"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg>Amps</button>
+  <button data-view="ph"><svg viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M7 16c3-9 8-9 11-1"/></svg>P-h</button>
+</nav>
+<p class="foot">Training model, not a design or certification tool. Properties come from a Peng-Robinson equation of state fitted to published pressure-temperature charts (typically within 1–3 psi). Blends with glide use bubble point for subcooling and dew point for superheat. Heat exchangers use a moving-boundary effectiveness model; charge is tracked by refrigerant mass in every coil and line.</p>
+</div>
+
+<script>
+/*PROPS*/
+</script>
+<script>
+/*ENGINE*/
+</script>
+<script>
+(function(){
+'use strict';
+const E = HPEngine, FL = {};
+for (const k in PROPS) FL[k] = new E.Fluid(k, PROPS[k]);
+const PATM = E.PATM, $ = id => document.getElementById(id);
+const PHONE = () => window.matchMedia('(max-width:819px)').matches;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- configuration ---------- */
+const PRESETS = {
+  cool: [
+    {k:'A', t:'AHRI A · 95°F', c:{idDB:80,idWB:67,odDB:95,odWB:75}, w:86},
+    {k:'B', t:'B · 82°F', c:{idDB:80,idWB:67,odDB:82,odWB:65}, w:77},
+    {k:'C', t:'C · dry coil', c:{idDB:80,idWB:57,odDB:82,odWB:65}, w:77},
+    {k:'X', t:'Hot day · 105°F', c:{idDB:80,idWB:67,odDB:105,odWB:76}, w:95},
+    {k:'L', t:'Low ambient · 65°F', c:{idDB:80,idWB:67,odDB:65,odWB:55}, w:60},
+  ],
+  heat: [
+    {k:'H1', t:'H1 · 47°F', c:{idDB:70,idWB:60,odDB:47,odWB:43}, w:68},
+    {k:'H2', t:'H2 · 35°F', c:{idDB:70,idWB:60,odDB:35,odWB:33}, w:50},
+    {k:'H3', t:'H3 · 17°F', c:{idDB:70,idWB:60,odDB:17,odWB:15}, w:32},
+    {k:'H5', t:'5°F', c:{idDB:70,idWB:60,odDB:5,odWB:4}, w:32},
+    {k:'M', t:'Mild · 60°F', c:{idDB:70,idWB:60,odDB:60,odWB:52}, w:77},
+  ]
+};
+const TONS = [1.5,2,2.5,3,3.5,4,5,7.5,10];
+function defaults(){
+  return {refrigerant:'R-410A',tons:3,mode:'cool',chargeMode:'realistic',shTarget:10,scTarget:10,lineLen:25,
+    indoor:{type:'tf',size:100,meter:'txv',txvSet:6,piston:0,eevSH:8},
+    outdoor:{type:'tf',size:100,meter:'txv',txvSet:5,piston:0,eevSH:6},
+    comp:{type:'single',stage:'high',speed:100},blower:{type:'ecm',cfm:1200,esp:0.5},odFan:{pct:100},
+    water:{gpm:9,ewt:86},cond:{idDB:80,idWB:67,odDB:95,odWB:75},
+    elec:{volts:230,compCap:35,fanCap:5,blowerCap:7.5},blowerOn:true,faults:{},sw:null,charge:null,matched:null,
+    savedCond:{cool:{idDB:80,idWB:67,odDB:95,odWB:75,ewt:86},heat:{idDB:70,idWB:60,odDB:47,odWB:43,ewt:68}}};
+}
+let cfg = defaults();
+try { const s = JSON.parse(localStorage.getItem('hpct-cfg') || 'null'); if (s && s.matched && FL[s.refrigerant]) cfg = Object.assign(defaults(), s); } catch(e) {}
+const save = () => { try { localStorage.setItem('hpct-cfg', JSON.stringify(cfg)); } catch(e) {} };
+const F = () => FL[cfg.refrigerant];
+
+function rematch(note){
+  const t = cfg.tons;
+  cfg.blower.cfm = Math.round(E.COIL[cfg.indoor.type].cfmId * t / 25) * 25;
+  cfg.water.gpm = Math.round(3 * t * 2) / 2;
+  cfg.elec.compCap = Math.round(10 * t + 5); cfg.elec.fanCap = t > 5 ? 7.5 : 5; cfg.elec.blowerCap = t > 3 ? 10 : 7.5;
+  cfg.indoor.piston = 0; cfg.outdoor.piston = 0;
+  cfg.matched = E.match(cfg, FL);
+  cfg.charge = cfg.matched.charge;
+  cfg.sw = E.defaultSwitches(F());
+  lastX = null;
+  if (note) logEvent(note);
+}
+
+/* ---------- solving ---------- */
+let lastX = null, res = null, VM = null, prevVM = null, elecRes = null;
+const g = p => p - PATM;
+function fmtP(psia, dec){ const v = psia - PATM; if (v < 0) return (-v * 2.036).toFixed(1) + ' inHg'; return v.toFixed(dec == null ? (v < 100 ? 1 : 0) : dec) + ' psig'; }
+function fmtPv(psia){ const v = psia - PATM; return v < 0 ? [(-v*2.036).toFixed(1),'inHg'] : [v.toFixed(v < 100 ? 1 : 0),'psig']; }
+const f0 = v => (v == null || !isFinite(v)) ? '—' : Math.round(v).toString();
+const f1 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(1);
+
+function solveNow(){
+  const r = E.solve(cfg, FL, lastX);
+  if (r.converged) lastX = r.x;
+  res = r;
+  const F_ = F();
+  res.beyond = !r.converged && r.Tc > F_.Tmax - 3;
+  res.air = airSide(r);
+  res.points = points(r);
+  VM = buildVM(r);
+  elecRes = E.electrical(cfg, r.ctx, r, true);
+}
+
+function airSide(r){
+  const c = r.ctx, P = E.Psy;
+  const Qe = r.m * (r.hEo - r.hEi), Qc = r.m * (r.hDis - r.hCo);
+  const out = {Qe, Qc};
+  const es = c.evap.stream, cs = c.cond.stream;
+  const ev = {}, co = {};
+  if (es.kind === 'air') {
+    const hOut = es.h - Qe / es.ma;
+    const f = r.f, sE = Math.max(1e-6, f.ftp + f.fsh);
+    let W2 = es.W;
+    if (r.wetCoil) W2 = es.W - r.epsE * (es.W - P.Ws(r.Ttp));
+    const Wout = (f.ftp * W2 + f.fsh * es.W) / sE;
+    const Tout = P.T_hW(hOut, Wout);
+    Object.assign(ev, {kind:'air', in: P.full(es.T, es.W), out: P.full(Tout, Math.min(Wout, P.Ws(Tout))), cfm: es.cfm});
+    ev.sens = es.ma * (0.240 + 0.444 * es.W) * (es.T - Tout); ev.lat = Qe - ev.sens;
+  } else { Object.assign(ev, {kind:'water', tin: es.T, tout: es.T - Qe / es.C, gpm: es.gpm}); }
+  if (cs.kind === 'air') { const Tout = cs.T + Qc / cs.C; Object.assign(co, {kind:'air', in: P.full(cs.T, cs.W), out: P.full(Tout, cs.W), cfm: cs.cfm}); }
+  else Object.assign(co, {kind:'water', tin: cs.T, tout: cs.T + Qc / cs.C, gpm: cs.gpm});
+  out.evap = ev; out.cond = co;
+  out.indoor = c.heat ? co : ev; out.outdoor = c.heat ? ev : co;
+  return out;
+}
+
+/* Port states by physical position (1..9) */
+const PORTNAMES = {
+  cool: ['Compressor discharge','Outdoor coil inlet (from reversing valve)','Outdoor coil outlet','Liquid line service valve','Indoor metering device inlet','Indoor coil inlet (after metering)','Indoor coil outlet','Vapor line service valve','Compressor suction (after accumulator)'],
+  heat: ['Compressor discharge','Outdoor coil outlet (to reversing valve)','Outdoor coil inlet (after metering)','Liquid line service valve','Indoor coil outlet liquid (check valve bypass)','Indoor coil outlet','Indoor coil inlet (hot gas)','Vapor line service valve (hot gas)','Compressor suction (after accumulator)']
+};
+function points(r){
+  const F_ = F(), heat = r.ctx.heat;
+  const dPll = Math.max(0, r.Pco - r.Pmi);
+  const dVL = r.ctx.heat ? (r.dPd - (r.m / r.ctx.mNom) ** 2) : r.dPs * 0.55;
+  let st;
+  if (!heat) st = [[r.Pd, r.hDis],[r.PcIn, r.hDis],[r.Pco, r.hCo],[r.Pco - 0.15*dPll, r.hCo],[r.Pmi, r.hCo],[r.PeIn, r.hEi],[r.PeOut, r.hEo],[r.PeOut - dVL, r.hEo],[r.Ps, r.hEo]];
+  else st = [[r.Pd, r.hDis],[r.PeOut, r.hEo],[r.PeIn, r.hEi],[r.Pmi + 0.15*dPll, r.hCo],[r.Pco - 0.8*dPll, r.hCo],[r.Pco, r.hCo],[r.PcIn, r.hDis],[r.Pd - 0.3*Math.max(0,dVL), r.hDis],[r.Ps, r.hEo]];
+  return st.map(([P,h], i) => { const s = F_.state(P, h); return {i: i+1, name: PORTNAMES[heat?'heat':'cool'][i], P, h, ...s}; });
+}
+
+function buildVM(r){
+  const F_ = F(), heat = r.ctx.heat, pts = r.points || points(r), a = r.air || airSide(r);
+  const e = E.electrical(cfg, r.ctx, r, true);
+  const lowP = heat ? r.Ps : pts[7].P;              // low-side gauge port
+  const highP = heat ? pts[7].P : pts[3].P;         // high-side gauge port
+  const Tsuc = heat ? pts[8].T : pts[7].T;
+  const Tliq = heat ? pts[4].T : pts[3].T;
+  const v = {
+    lowP, highP, Tsuc, Tliq, Tdis: r.disSt.T, Pd: r.Pd, Ps: r.Ps,
+    SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(highP) - Tliq,
+    SHevap: r.ze, amps: e.comp.A, Q: heat ? a.Qc : a.Qe, kw: e.totalW / 1000,
+    COP: (heat ? a.Qc : a.Qe) / (e.totalW * 3.412), m: r.m,
+    supply: a.indoor.kind === 'air' ? a.indoor.out.db : NaN,
+  };
+  pts.forEach(p => { v['P'+p.i] = p.P; v['T'+p.i] = p.T; });
+  return v;
+}
+function offVM(){
+  const c = cfg.cond, F_ = F();
+  const odT = (cfg.outdoor.type === 'water') ? cfg.water.ewt : c.odDB;
+  const Teq = Math.min(c.idDB, odT) + 0.25 * Math.abs(c.idDB - odT);
+  const Peq = F_.pDew(Teq);
+  const v = { lowP: Peq, highP: Peq, Tsuc: odT, Tliq: odT, Tdis: odT + 15, Pd: Peq, Ps: Peq, SH: NaN, SC: NaN, amps: 0, Q: 0, kw: (cfg.blowerOn && S.call ? (elecRes ? elecRes.blower.W : 0) : 0)/1000, COP: 0, m: 0, supply: c.idDB };
+  for (let i = 1; i <= 9; i++) { v['P'+i] = Peq; v['T'+i] = (i >= 5 && i <= 7) ? c.idDB : odT; }
+  return v;
+}
+
+/* ---------- transient controller ---------- */
+const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, tRun: 999, t: 0, speed: 1 };
+let disp = null, logRows = [];
+function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60); logRows.unshift({t: `${m}:${String(s).padStart(2,'0')}`, msg, kind}); if (logRows.length > 60) logRows.pop(); renderLog(); }
+function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
+function trip(kind, why){ S.comp = false; S.trip = kind; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
+  if (S.trips >= cfg.sw.maxTrips) { S.lock = true; logEvent(`Control LOCKOUT after ${S.trips} trips. Find the cause, then press Reset control.`, 'bad'); } }
+function tick(dtReal){
+  const dt = dtReal * S.speed; S.t += dt;
+  if (S.asc > 0) S.asc = Math.max(0, S.asc - dt);
+  const sw = cfg.sw;
+  if (S.trip === 'HPS' && g(disp.Pd) <= sw.hpsClose) { logEvent('High-pressure switch closed again (auto reset).'); S.trip = null; }
+  if (S.trip === 'LPS' && g(disp.Ps) >= sw.lpsClose) { logEvent('Low-pressure switch closed again (auto reset).'); S.trip = null; }
+  if (S.trip === 'IOL' && disp.Tdis <= 190) { logEvent('Compressor internal overload reset (motor cooled).'); S.trip = null; }
+  const want = S.call && !S.lock && !S.trip;
+  if (!S.comp && want && S.asc <= 0) { S.comp = true; S.tRun = 0; logEvent('Compressor started.'); }
+  if (S.comp && !want) { S.comp = false; S.asc = sw.asc; logEvent('Thermostat satisfied / call removed — compressor off.'); }
+  if (S.comp) {
+    S.tRun += dt;
+    if (g(disp.Pd) >= sw.hpsOpen) trip('HPS', `discharge reached ${g(disp.Pd).toFixed(0)} psig (opens at ${sw.hpsOpen})`);
+    else if (S.tRun > sw.lpsBypass && g(disp.Ps) <= sw.lpsOpen) trip('LPS', `suction fell to ${fmtP(disp.Ps)} (opens at ${sw.lpsOpen} psig)`);
+    else if (disp.Tdis >= 285) trip('IOL', `discharge line ${disp.Tdis.toFixed(0)}°F — motor overheated`);
+  }
+  let tgt = S.comp ? Object.assign({}, VM) : offVM();
+  if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
+  for (const k in tgt) {
+    const a = tgt[k], b = disp[k];
+    if (!isFinite(a)) { disp[k] = a; continue; }
+    if (!isFinite(b)) { disp[k] = a; continue; }
+    disp[k] = b + (a - b) * (1 - Math.exp(-dt / tau(k)));
+  }
+  renderTiles(); renderStatus(); updateSchemLive();
+}
+
+/* ---------- tiles ---------- */
+const TILES = [
+  {k:'lowP', l:'Low side', c:'var(--suct)', v: d => fmtPv(d.lowP), s: d => `sat ${f1(F().tDew(d.lowP))}°F dew`, dd: 'lowP', unitDelta: 'psi'},
+  {k:'SH', l:'SH', c:'var(--suct)', v: d => S.comp ? [f1(d.SH),'°F'] : ['—',''], s: d => `suction ${f1(d.Tsuc)}°F`, dd: 'SH', unitDelta:'°'},
+  {k:'highP', l:'High side', c:'var(--hot)', v: d => fmtPv(d.highP), s: d => `sat ${f1(F().tBub(d.highP))}°F bub`, dd:'highP', unitDelta:'psi'},
+  {k:'SC', l:'SC', c:'var(--liq)', v: d => S.comp ? [f1(d.SC),'°F'] : ['—',''], s: d => `liquid ${f1(d.Tliq)}°F`, dd:'SC', unitDelta:'°'},
+  {k:'Tdis', l:'Dis. temp', c:'var(--hot)', v: d => [f0(d.Tdis),'°F'], s: d => d.Tdis > 250 ? 'too hot' : d.Tdis > 225 ? 'running hot' : 'line temp', dd:'Tdis', unitDelta:'°'},
+  {k:'amps', l:'Amps', c:'var(--accent)', v: d => [f1(d.amps),'A'], s: d => `RLA ${cfg.matched.RLA}`, dd:'amps', unitDelta:'A'},
+  {k:'Q', l: () => cfg.mode === 'heat' ? 'Heating' : 'Cooling', c:'var(--good)', v: d => [(d.Q/1000).toFixed(1),'kBtu/h'], s: d => `${(d.Q/12000).toFixed(2)} tons`, dd:'Q', unitDelta:'k', scale: 1/1000},
+  {k:'COP', l:'COP', c:'var(--good)', v: d => [S.comp ? d.COP.toFixed(2) : '—',''], s: d => S.comp ? `EER ${(d.COP*3.412).toFixed(1)} · ${d.kw.toFixed(2)} kW` : `${d.kw.toFixed(2)} kW`, dd:'COP', unitDelta:''},
+];
+function buildTiles(){ $('tiles').innerHTML = TILES.map(t => `<div class="tile" id="tile-${t.k}" style="--tc:${t.c}"><div class="k"></div><div class="v"></div><div class="s"></div><span class="d"></span></div>`).join(''); }
+function renderTiles(){
+  for (const t of TILES) {
+    const el = $('tile-' + t.k); const [v, u] = t.v(disp);
+    el.children[0].textContent = typeof t.l === 'function' ? t.l() : t.l;
+    el.children[1].innerHTML = `${esc(v)}<u>${esc(u)}</u>`;
+    el.children[2].textContent = t.s(disp);
+  }
+  const ml = $('miniLine');
+  if (ml) ml.innerHTML = `<span>Dis <b>${f0(disp.Tdis)}°F</b></span><span><b>${f1(disp.amps)}</b> A</span><span><b>${(disp.Q/1000).toFixed(1)}</b>k ${cfg.mode==='heat'?'heat':'cool'}</span><span>COP <b>${S.comp ? disp.COP.toFixed(2) : '—'}</b></span>`;
+  const unsettled = S.comp && ['lowP','highP','Tdis','SH'].some(k => isFinite(VM[k]) && Math.abs(disp[k] - VM[k]) > (k.endsWith('P') ? 2 : 1));
+  $('settle').textContent = unsettled ? (PHONE() ? 'Settling…' : 'Settling — readings are still moving toward steady state. Wait for stable conditions before recording.') : (S.comp ? 'Stable.' : '');
+}
+let flashTimer = null;
+function flashDeltas(prev, cur){
+  if (!prev) return;
+  for (const t of TILES) {
+    const el = $('tile-' + t.k); const k = t.dd;
+    let d = cur[k] - prev[k]; if (!isFinite(d)) continue;
+    if (t.scale) d *= t.scale;
+    const thr = k === 'COP' ? 0.03 : k === 'amps' ? 0.15 : t.scale ? 0.2 : 0.6;
+    const sp = el.querySelector('.d');
+    if (Math.abs(d) >= thr) { sp.textContent = (d > 0 ? '▲' : '▼') + Math.abs(d).toFixed(k==='COP'?2:1); sp.className = 'd ' + (d > 0 ? 'up' : 'dn'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+    else el.classList.remove('flash');
+  }
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => document.querySelectorAll('.tile.flash').forEach(e => e.classList.remove('flash')), 9000);
+}
+
+function renderStatus(){
+  const p = $('statePill');
+  let txt = 'Running', cls = 'run';
+  if (S.lock) { txt = 'Lockout'; cls = 'trip'; }
+  else if (S.trip) { txt = S.trip === 'HPS' ? 'High-pressure trip' : S.trip === 'LPS' ? 'Low-pressure trip' : 'Overload trip'; cls = 'trip'; }
+  else if (!S.call) { txt = 'Off — no call'; cls = 'idle'; }
+  else if (!S.comp) { txt = 'Waiting (anti-short-cycle)'; cls = 'wait'; }
+  p.textContent = txt; p.className = 'pill ' + cls;
+  const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60);
+  $('clock').textContent = `t = ${m}:${String(s).padStart(2,'0')}`;
+  $('ascTxt').textContent = S.asc > 0 ? `restart delay ${Math.ceil(S.asc)} s` : '';
+  $('resetCtl').style.display = S.lock ? '' : 'none';
+  $('callBtn').textContent = 'Thermostat: ' + (S.call ? 'ON' : 'OFF');
+}
+
+/* ---------- schematic ---------- */
+const COL = { hv:'var(--hot)', liq:'var(--liq)', lmix:'var(--mix)', lv:'var(--suct)', off:'var(--off)' };
+const SEG = {
+  dis:   {d:'M160 216 V160 H90 V168', cool:'hv', heat:'hv', rev:[0,0]},
+  rvod:  {d:'M70 184 V196 H16 V70 H24', cool:'hv', heat:'lv', rev:[0,1]},
+  odm:   {d:'M186 70 H196 V110', cool:'liq', heat:'lmix', rev:[0,1]},
+  msv:   {d:'M196 126 V150 H206', cool:'liq', heat:'liq', rev:[0,1]},
+  ll:    {d:'M206 150 H262', cool:'liq', heat:'liq', rev:[0,1]},
+  idm:   {d:'M269 142 V110 H282', cool:'lmix', heat:'liq', rev:[0,1]},
+  vend:  {d:'M368 110 H384 V250 H254', cool:'lv', heat:'hv', rev:[0,1]},
+  vl:    {d:'M254 250 H206', cool:'lv', heat:'hv', rev:[0,1]},
+  rvvl:  {d:'M206 250 H190 V196 H165 A5 5 0 0 0 155 196 H110 V184', cool:'lv', heat:'hv', rev:[0,1]},
+  rvacc: {d:'M90 184 V202', cool:'lv', heat:'lv', rev:[0,0]},
+  acc:   {d:'M90 242 V266 H160 V256', cool:'lv', heat:'lv', rev:[0,0]},
+};
+const TP = [[125,160],[16,130],[196,92],[206,150],[248,150],[269,126],[384,150],[206,250],[125,266]];
+let selected = {kind:'part', id:'comp'};
+function buildSchem(){
+  const svg = $('schem');
+  let s = `<defs><pattern id="fins" width="4" height="10" patternUnits="userSpaceOnUse"><path d="M2 0V10" stroke="#0e1317" stroke-width="0.8" opacity=".45"/></pattern></defs>`;
+  s += `<rect x="6" y="20" width="200" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text x="16" y="34" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">OUTDOOR UNIT</text>`;
+  s += `<rect x="254" y="20" width="140" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text x="264" y="34" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">INDOOR UNIT</text>`;
+  s += `<text x="230" y="164" text-anchor="middle" fill="var(--muted)" font-size="8">liquid line</text><text x="230" y="264" text-anchor="middle" fill="var(--muted)" font-size="8">vapor line</text><text id="lsLen" x="230" y="206" text-anchor="middle" fill="var(--muted)" font-size="8"></text>`;
+  // air text
+  s += `<text id="odAir" x="104" y="46" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idSup" x="324" y="52" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idRet" x="324" y="284" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text>`;
+  s += `<path d="M324 272 V60" stroke="var(--line)" stroke-width="10" opacity=".35"/><path d="M318 66 l6 -8 l6 8" fill="none" stroke="var(--muted)" stroke-width="1.5"/>`;
+  // pipes
+  for (const k in SEG) s += `<path id="seg-${k}" d="${SEG[k].d}" fill="none" stroke="var(--off)" stroke-width="${k==='vl'||k==='vend'||k==='rvvl'?4.5:3}" stroke-linejoin="round" stroke-linecap="round"/><path id="flow-${k}" d="${SEG[k].d}" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" class="flow"/>`;
+  // outdoor coil
+  s += `<g class="comp" data-part="odcoil"><rect x="24" y="52" width="162" height="36" rx="4" fill="#1d2731" stroke="var(--line)"/><g id="odZones"></g><rect x="24" y="52" width="162" height="36" rx="4" fill="url(#fins)" pointer-events="none"/><text x="100" y="99" text-anchor="middle" fill="var(--muted)" font-size="8.5" id="odCoilLbl">Outdoor coil</text></g>`;
+  // fan
+  s += `<g class="comp" data-part="odfan"><circle id="odFanBody" cx="112" cy="124" r="17" fill="#1d2731" stroke="var(--line)"/><g id="odFanBlades"><path d="M112 124 L112 110 Q119 113 112 124 M112 124 L126 124 Q123 131 112 124 M112 124 L112 138 Q105 135 112 124 M112 124 L98 124 Q101 117 112 124" fill="var(--muted)"/></g><text x="112" y="152" text-anchor="middle" fill="var(--muted)" font-size="8" id="odFanLbl">Fan</text></g>`;
+  // od metering
+  s += `<g class="comp" data-part="odmeter"><rect x="188" y="110" width="16" height="16" rx="3" fill="#1d2731" stroke="var(--line)"/><path d="M190 124 L202 112" stroke="var(--muted)" stroke-width="1.3"/><text x="184" y="121" text-anchor="end" fill="var(--muted)" font-size="7" id="odMeterLbl">TXV</text></g>`;
+  // RV
+  s += `<g class="comp" data-part="rv"><rect x="60" y="168" width="60" height="16" rx="4" fill="#1d2731" stroke="var(--line)"/><text x="90" y="179.5" text-anchor="middle" fill="var(--ink)" font-size="8" font-weight="600" id="rvLbl">RV</text></g>`;
+  // accumulator
+  s += `<g class="comp" data-part="acc"><rect x="82" y="202" width="16" height="40" rx="8" fill="#1d2731" stroke="var(--line)"/><text x="78" y="226" text-anchor="end" fill="var(--muted)" font-size="7.5">accum.</text></g>`;
+  // compressor
+  s += `<g class="comp" data-part="comp"><circle cx="160" cy="236" r="20" fill="#1d2731" stroke="var(--line)" stroke-width="1.5"/><text x="160" y="233" text-anchor="middle" fill="var(--ink)" font-size="8.5" font-weight="600">COMP</text><text x="160" y="245" text-anchor="middle" fill="var(--accent)" font-size="8.5" font-family="IBM Plex Mono" id="compA"></text></g>`;
+  // service valves
+  s += `<rect x="202" y="146" width="8" height="8" fill="var(--panel2)" stroke="var(--muted)"/><rect x="202" y="246" width="8" height="8" fill="var(--panel2)" stroke="var(--muted)"/>`;
+  // indoor coil
+  s += `<g class="comp" data-part="idcoil"><rect x="282" y="94" width="86" height="32" rx="4" fill="#1d2731" stroke="var(--line)"/><g id="idZones"></g><rect x="282" y="94" width="86" height="32" rx="4" fill="url(#fins)" pointer-events="none"/><text x="325" y="88" text-anchor="middle" fill="var(--muted)" font-size="8" id="idCoilLbl">Indoor coil</text></g>`;
+  // id metering
+  s += `<g class="comp" data-part="idmeter"><rect x="262" y="142" width="14" height="16" rx="3" fill="#1d2731" stroke="var(--line)"/><path d="M264 156 L274 144" stroke="var(--muted)" stroke-width="1.3"/><text x="258" y="172" fill="var(--muted)" font-size="8" id="idMeterLbl">TXV</text></g>`;
+  // blower
+  s += `<g class="comp" data-part="blower"><circle cx="324" cy="196" r="22" fill="#1d2731" stroke="var(--line)"/><g id="blowerBlades"><circle cx="324" cy="196" r="14" fill="none" stroke="var(--muted)" stroke-width="3" stroke-dasharray="3 3"/></g><text x="324" y="230" text-anchor="middle" fill="var(--muted)" font-size="8.5" id="blowerLbl">Blower</text></g>`;
+  // test points
+  TP.forEach(([x,y], i) => { s += `<g class="tp" data-tp="${i+1}"><circle cx="${x}" cy="${y}" r="7.5"/><text x="${x}" y="${y+3}" text-anchor="middle">${i+1}</text></g>`; });
+  svg.innerHTML = s;
+  svg.addEventListener('click', ev => {
+    const tp = ev.target.closest('.tp'), part = ev.target.closest('.comp');
+    if (tp) selected = {kind:'tp', id: +tp.dataset.tp}; else if (part) selected = {kind:'part', id: part.dataset.part}; else return;
+    probeOpen = false; renderProbe(); markSel();
+  });
+}
+function markSel(){
+  document.querySelectorAll('#schem .tp,#schem .comp').forEach(e => e.classList.remove('sel'));
+  const q = selected.kind === 'tp' ? `.tp[data-tp="${selected.id}"]` : `.comp[data-part="${selected.id}"]`;
+  const el = document.querySelector('#schem ' + q); if (el) el.classList.add('sel');
+}
+function zones(gid, x, y, w, h, list, fromRight){
+  const tot = list.reduce((a,b) => a + Math.max(0,b[0]), 0) || 1; let pos = 0, out = '';
+  for (const [f, col] of list) { const ww = w * Math.max(0,f) / tot; const xx = fromRight ? x + w - pos - ww : x + pos; out += `<rect x="${xx.toFixed(1)}" y="${y}" width="${ww.toFixed(1)}" height="${h}" fill="${col}" opacity=".75"/>`; pos += ww; }
+  $(gid).innerHTML = out;
+}
+function renderSchemStatic(){
+  const heat = cfg.mode === 'heat', on = S.comp, r = res;
+  for (const k in SEG) {
+    const sg = SEG[k];
+    let col = on ? COL[heat ? sg.heat : sg.cool] : COL.off;
+    $('seg-' + k).setAttribute('stroke', col);
+    $('seg-' + k).setAttribute('stroke-dasharray', on && r.upSt.phase === '2ph' && ((!heat && (k==='ll'||k==='msv'||k==='odm')) || (heat && (k==='ll'||k==='msv'||k==='idm'))) ? '5 2' : '');
+    const fl = $('flow-' + k);
+    fl.style.display = on ? '' : 'none';
+    fl.classList.toggle('rev', !!sg.rev[heat ? 1 : 0]);
+    fl.style.setProperty('--dur', (1.4 / Math.max(0.25, r.m / r.ctx.mNom)).toFixed(2) + 's');
+  }
+  const f = r.f;
+  const Z = { des:'var(--hot)', tpc:'var(--cond)', sc:'var(--liq)', tpe:'var(--mix)', sh:'var(--suct)' };
+  const condZ = [[f.f1, Z.des],[f.f2, Z.tpc],[f.f3, Z.sc]], evapZ = [[f.ftp, Z.tpe],[f.fsh, Z.sh]];
+  if (!on) { $('odZones').innerHTML = ''; $('idZones').innerHTML = ''; }
+  else if (!heat) { zones('odZones', 24, 52, 162, 36, condZ, false); zones('idZones', 282, 94, 86, 32, evapZ, false); }
+  else { zones('odZones', 24, 52, 162, 36, evapZ, true); zones('idZones', 282, 94, 86, 32, condZ, true); }
+  const mt = m => m.meter === 'txv' ? 'TXV' : m.meter === 'eev' ? 'EEV' : 'Piston';
+  $('odMeterLbl').textContent = mt(cfg.outdoor) + (heat ? '' : ' · bypassed'); $('odMeterLbl').setAttribute('opacity', heat ? 1 : .6);
+  $('idMeterLbl').textContent = mt(cfg.indoor) + (heat ? ' · bypassed' : ''); $('idMeterLbl').setAttribute('opacity', heat ? .6 : 1);
+  $('rvLbl').textContent = heat ? 'RV · HEAT' : 'RV · COOL';
+  const ct = {tf:'tube & fin', mc:'microchannel', water:'coaxial water coil'};
+  $('odCoilLbl').textContent = `${heat ? 'Evaporator' : 'Condenser'} · ${ct[cfg.outdoor.type]}`;
+  $('idCoilLbl').textContent = `${heat ? 'Condenser' : 'Evaporator'} · ${ct[cfg.indoor.type]}`;
+  $('blowerLbl').textContent = `${cfg.blower.type.toUpperCase()} blower`;
+  $('lsLen').textContent = `${cfg.lineLen} ft line set`;
+  const spin = (id, run) => { const el = $(id); el.classList.toggle('spin', !!run); };
+  const wtr = cfg.outdoor.type === 'water';
+  $('odFanBlades').style.display = wtr ? 'none' : ''; $('odFanBody').setAttribute('stroke-dasharray', wtr ? '3 3' : '');
+  $('odFanLbl').textContent = wtr ? `Water loop · ${cfg.water.gpm} gpm` : `Fan ${cfg.odFan.pct}%`;
+  spin('odFanBlades', on && !wtr && cfg.odFan.pct > 0);
+  spin('blowerBlades', S.call && cfg.blowerOn);
+  markSel();
+}
+function updateSchemLive(){
+  const a = res.air, heat = cfg.mode === 'heat', on = S.comp;
+  const odA = a.outdoor, idA = a.indoor;
+  if (cfg.outdoor.type === 'water') $('odAir').textContent = on ? `Water ${f0(odA.tin)}°F in → ${f0(odA.tout)}°F out · ${cfg.water.gpm} gpm` : `Water ${f0(cfg.water.ewt)}°F`;
+  else $('odAir').textContent = on ? `Air ${f0(odA.in.db)}°F in → ${f0(odA.out.db)}°F out` : `Outdoor air ${f0(cfg.cond.odDB)}°F`;
+  $('idSup').textContent = on ? `Supply ${f1(idA.out.db)}°F db` : `Supply ${f0(cfg.cond.idDB)}°F`;
+  $('idRet').textContent = `Return ${f0(cfg.cond.idDB)}/${f0(cfg.cond.idWB)}°F · ${f0(res.ctx.idCfm)} cfm`;
+  $('compA').textContent = `${f1(disp.amps)} A`;
+}
+
+/* ---------- probe ---------- */
+function kv(rows){ return '<div class="kv">' + rows.filter(Boolean).map(([k,v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('') + '</div>'; }
+function stateDesc(p){ if (p.phase === 'vap') return `vapor, ${p.sh.toFixed(1)}°F superheat`; if (p.phase === 'liq') return `liquid, ${p.sc.toFixed(1)}°F subcooled`; return `mixture, ${(p.x*100).toFixed(0)}% vapor`; }
+function renderProbe(){
+  const el = $('probe'), r = res, heat = cfg.mode === 'heat', on = S.comp, F_ = F(), e = elecRes;
+  let h = '';
+  if (selected.kind === 'tp') {
+    const p = r.points[selected.id - 1];
+    const P = on ? disp['P'+p.i] : disp['P'+p.i], T = disp['T'+p.i];
+    h = `<h3><span class="dot">${p.i}</span>${esc(p.name)}</h3>` + kv([
+      ['Pressure', fmtP(P)], ['Temperature', f1(T) + '°F'],
+      ['Dew sat. temp', f1(F_.tDew(P)) + '°F'], ['Bubble sat. temp', f1(F_.tBub(P)) + '°F'],
+      on && ['Condition', stateDesc(p)], on && ['Enthalpy', p.h.toFixed(1) + ' Btu/lb'],
+    ]) + (on ? '' : '<p class="hint">Compressor off — pressures are equalizing.</p>');
+  } else {
+    const id = selected.id, a = r.air;
+    if (id === 'comp') {
+      const c = e.comp;
+      h = `<h3>Compressor · ${c.type === 'inv' ? 'inverter scroll' : c.type === 'two' ? 'two-stage scroll' : 'single-speed scroll'}</h3>` + kv([
+        ['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A'], c.type !== 'inv' && ['Run (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && ['Start (S) amps', on ? f1(c.S) + ' A' : '0 A'],
+        ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`],
+        c.type === 'inv' && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
+        ['Suction', fmtP(disp.Ps)], ['Discharge', fmtP(disp.Pd)], ['Compression ratio', on ? (r.PR).toFixed(2) : '—'],
+        ['Discharge temp', f0(disp.Tdis) + '°F'], ['Mass flow', on ? f0(r.m) + ' lb/h' : '0'], ['Volumetric eff.', on ? (r.etaV*100).toFixed(0)+'%' : '—'],
+        ['Isentropic eff.', on ? (r.etaIs*100).toFixed(0)+'%' : '—'], ['Suction state', on ? (r.wet ? 'LIQUID FLOODBACK' : r.shSuc.toFixed(1)+'°F superheat') : '—'],
+      ]) + (c.type !== 'inv' ? `<p class="hint">Run capacitor ${c.capRated} µF rated · measured ${on ? f1(c.capMeas) : '—'} µF (start-winding amps × 2652 ÷ ${f0(c.capV)} V across the cap)</p>` : '');
+    } else if (id === 'odfan' || id === 'blower') {
+      const isB = id === 'blower', m = isB ? e.blower : e.odFan;
+      if (!isB && cfg.outdoor.type === 'water') h = `<h3>Water loop</h3>` + kv([['Flow', cfg.water.gpm + ' gpm'], ['Entering water', f1(cfg.water.ewt)+'°F'], ['Leaving water', on ? f1(a.outdoor.tout)+'°F' : '—'], ['Water ΔT', on ? f1(Math.abs(a.outdoor.tout - a.outdoor.tin))+'°F' : '—']]);
+      else h = `<h3>${isB ? cfg.blower.type.toUpperCase() + ' indoor blower' : 'Outdoor fan motor (PSC)'}</h3>` + kv([
+        ['Amps', ((isB ? S.call && cfg.blowerOn : on) ? f1(m.A) : '0.0') + ' A'], ['Power', ((isB ? S.call : on) ? f0(m.W) : 0) + ' W'],
+        ['Airflow', f0(isB ? r.ctx.idCfm : r.ctx.odCfm) + ' cfm'], isB && ['External static', cfg.blower.esp.toFixed(2) + ' in. w.c.'],
+        isB && ['CFM per ton', f0(r.ctx.idCfm / cfg.tons)], m.capRated && ['Capacitor', `${m.capRated} µF rated · ${f1(m.capMeas)} µF measured`],
+      ]);
+    } else if (id === 'odcoil' || id === 'idcoil') {
+      const isId = id === 'idcoil', role = (isId === heat) ? 'cond' : 'evap', A = isId ? a.indoor : a.outdoor, f = r.f;
+      const zonesTxt = role === 'cond' ? `desuperheat ${(f.f1*100).toFixed(0)}% · condensing ${(f.f2*100).toFixed(0)}% · subcooling ${(f.f3*100).toFixed(0)}%` : `boiling ${(f.ftp*100).toFixed(0)}% · superheating ${(f.fsh*100).toFixed(0)}%`;
+      h = `<h3>${isId ? 'Indoor' : 'Outdoor'} coil — ${role === 'cond' ? 'condenser' : 'evaporator'}</h3>` + kv([
+        ['Heat moved', on ? f1((role === 'cond' ? a.Qc : a.Qe)/1000) + ' kBtu/h' : '—'],
+        ['Sat. temp', on ? f1(role === 'cond' ? r.Tc : r.Te) + '°F' : '—'],
+        A.kind === 'air' ? ['Air in', `${f1(A.in.db)}°F db / ${f1(A.in.wb)} wb`] : ['Water in', f1(A.tin) + '°F'],
+        A.kind === 'air' ? ['Air out', on ? `${f1(A.out.db)}°F db / ${f1(A.out.wb)} wb` : '—'] : ['Water out', on ? f1(A.tout) + '°F' : '—'],
+        A.kind === 'air' && ['Air ΔT', on ? f1(Math.abs(A.in.db - A.out.db)) + '°F' : '—'],
+        role === 'evap' && A.kind === 'air' && ['Coil surface', r.wetCoil ? 'wet (dehumidifying)' : 'dry'],
+        role === 'evap' && A.kind === 'air' && ['Moisture removed', on ? f1(Math.max(0,(A.in.W - A.out.W))*7000) + ' gr/lb' : '—'],
+        ['Refrigerant ΔP', on ? f1(role === 'cond' ? r.PcIn - r.Pco : r.PeIn - r.PeOut) + ' psi' : '—'],
+        ['Charge held', on ? (role === 'cond' ? r.mParts.cond : r.mParts.evap).toFixed(2) + ' lb' : '—'],
+      ]) + (on ? `<p class="hint">Coil length used for ${zonesTxt}.</p>` : '');
+    } else if (id === 'idmeter' || id === 'odmeter') {
+      const isId = id === 'idmeter', M = isId ? cfg.indoor : cfg.outdoor, active = isId !== heat;
+      const K = isId ? cfg.matched.in : cfg.matched.out;
+      h = `<h3>${isId ? 'Indoor' : 'Outdoor'} metering — ${M.meter === 'txv' ? 'TXV' : M.meter === 'eev' ? 'EEV' : 'piston'}</h3>`;
+      if (!active) h += `<p class="hint">Bypassed in ${heat ? 'heating' : 'cooling'} — refrigerant flows backward through the check valve.</p>`;
+      else h += kv([
+        ['Inlet', `${fmtP(r.Pmi)} · ${r.upSt.phase === 'liq' ? r.upSt.sc.toFixed(1) + '°F SC' : 'FLASH GAS ' + (r.upSt.x*100).toFixed(0) + '%'}`],
+        ['Outlet', fmtP(r.PeIn)], ['Pressure drop', f0(r.Pmi - r.PeIn) + ' psi'], ['Flow', f0(r.m) + ' lb/h'],
+        M.meter !== 'piston' && ['Valve opening', r.open == null ? '—' : Math.round(Math.min(1, Math.max(0, r.open)) * 100) + '%'],
+        M.meter === 'txv' && ['Static SH setting', M.txvSet + '°F'], M.meter === 'eev' && ['Target SH', M.eevSH + '°F'],
+        M.meter === 'piston' && ['Bore', ((M.piston || K.piston)).toFixed(3) + ' in'],
+        ['Flash after valve', (r.eiSt.x*100).toFixed(0) + '% vapor'],
+      ]);
+    } else if (id === 'rv') {
+      h = `<h3>Reversing valve</h3><p class="hint">${heat ? 'Heating position: hot gas goes up the vapor line to the indoor coil, and the outdoor coil returns suction gas.' : 'Cooling position: hot gas goes to the outdoor coil, and the vapor line returns suction gas from the indoor coil.'} Brands differ on which mode energizes the solenoid (O vs B terminal).</p>` + kv([['Discharge side', fmtP(disp.Pd)], ['Suction side', fmtP(disp.Ps)]]);
+    } else if (id === 'acc') {
+      h = `<h3>Suction accumulator</h3><p class="hint">Catches liquid that leaves the evaporator so it can't slug the compressor.</p>` + kv([['Evaporator exit', on ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F superheat' : `wet, ${(r.xEo*100).toFixed(0)}% vapor`) : '—'], ['Liquid holding', on && r.ze < 0 ? 'YES — floodback' : 'none']]);
+    }
+  }
+  el.innerHTML = h;
+  const k = el.querySelector('.kv');
+  if (k && k.children.length > 6) { if (!probeOpen) k.classList.add('clip'); const b = document.createElement('button'); b.className = 'more'; b.textContent = probeOpen ? 'Show less' : `Show all ${k.children.length} readings`; b.onclick = () => { probeOpen = !probeOpen; renderProbe(); }; k.after(b); }
+}
+let probeOpen = false;
+
+/* ---------- alerts ---------- */
+function renderAlerts(){
+  const r = res, A = [], heat = cfg.mode === 'heat', sw = cfg.sw, a = r.air;
+  if (!S.comp) { $('alerts').innerHTML = ''; return; }
+  if (r.beyond) A.push(['bad', 'Head pressure would climb past the model range — the high-pressure switch will open.']);
+  else if (!r.converged) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
+  if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
+  if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves the coil ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback risk.`]);
+  if (r.disSt.T > 250) A.push(['bad', `Discharge ${f0(r.disSt.T)}°F — oil breakdown territory (limit ~225–250°F at the line).`]);
+  else if (r.disSt.T > 225) A.push(['warn', `Discharge ${f0(r.disSt.T)}°F — running hot.`]);
+  if (elecRes.comp.A > cfg.matched.RLA * 1.05) A.push(['warn', `Compressor at ${f1(elecRes.comp.A)} A, above RLA ${cfg.matched.RLA} A.`]);
+  if (!heat && r.Te < 32) A.push(['warn', `Indoor coil saturation ${f1(r.Te)}°F — below freezing, the coil will ice.`]);
+  if (heat && cfg.outdoor.type !== 'water' && r.Te < 32 && r.wetCoil) A.push(['info', `Outdoor coil at ${f1(r.Te)}°F with moist air — frost is building. (Defrost cycles arrive in the next build.)`]);
+  if (cfg.outdoor.type === 'water' && heat && a.outdoor.tout < 38) A.push(['bad', `Leaving water ${f1(a.outdoor.tout)}°F — freeze protection would trip.`]);
+  const cpt = r.ctx.idCfm / cfg.tons; if (cpt < 325) A.push(['warn', `Indoor airflow ${f0(cpt)} cfm/ton — low.`]);
+  if (g(r.Pd) > sw.hpsOpen - 40 && !r.beyond) A.push(['warn', `Discharge within 40 psi of the high-pressure switch (${sw.hpsOpen} psig).`]);
+  $('alerts').innerHTML = A.map(([k,t]) => `<div class="alert ${k==='bad'?'bad':k==='info'?'info':''}">${esc(t)}</div>`).join('');
+}
+
+/* ---------- changes ---------- */
+const CHG = [
+  ['lowP','Low side','psi'],['highP','High side','psi'],['SH','Superheat','°F'],['SC','Subcooling','°F'],['Tdis','Discharge temp','°F'],
+  ['amps','Compressor amps','A'],['Q','Capacity','Btu/h'],['COP','COP',''],['supply','Supply air','°F'],['m','Mass flow','lb/h'],['kw','Total power','kW'],
+];
+function renderChanges(what, prev, cur){
+  const el = $('changes');
+  const rows = [];
+  for (const [k,l,u] of CHG) {
+    const d = cur[k] - prev[k]; if (!isFinite(d)) continue;
+    const thr = {COP:.02, amps:.1, Q:150, kw:.02, m:4}[k] ?? 0.4;
+    if (Math.abs(d) < thr) continue;
+    const dv = k === 'COP' || k === 'kw' ? d.toFixed(2) : k === 'Q' || k === 'm' ? Math.round(d).toString() : d.toFixed(1);
+    rows.push(`<li><span>${l}</span><b class="${d>0?'up':'dn'}">${d>0?'+':''}${dv} ${u}</b></li>`);
+  }
+  el.innerHTML = `<h2>What changed</h2><div class="head">${esc(what)}</div>` + (rows.length ? `<ul>${rows.join('')}</ul>` : '<div class="note">No significant change at steady state.</div>');
+  showToast(`<div class="head">${esc(what)}</div>` + (rows.length ? `<ul>${rows.slice(0,8).join('')}</ul>` : '<div class="note">No significant change.</div>'));
+}
+
+let toastT = null;
+function showToast(html){ const t = $('toast'); if (!t) return; t.innerHTML = html; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 7000); }
+$('toast').addEventListener('click', () => $('toast').classList.remove('show'));
+
+/* ---------- controls ---------- */
+const CTL = [];  // {id, get, set, ...}
+function num(id, label, unit, min, max, step, get, set, opt = {}){
+  CTL.push({id, type:'num', label, unit, min, max, step, get, set, ...opt});
+  return `<div class="row" id="w-${id}"><label for="${id}">${label}</label><div class="val"><button class="step" data-step="${id}" data-dir="-1" aria-label="decrease ${label}">−</button><input type="number" id="${id}" min="${min}" max="${max}" step="${step}"><em>${unit}</em><button class="step" data-step="${id}" data-dir="1" aria-label="increase ${label}">+</button></div><input type="range" id="${id}-r" min="${min}" max="${max}" step="${step}" aria-label="${label}"></div>`;
+}
+function sel(id, label, opts, get, set, opt = {}){
+  CTL.push({id, type:'sel', label, get, set, ...opt});
+  return `<div class="sel" id="w-${id}"><label for="${id}">${label}</label><select id="${id}">${opts.map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
+}
+function grp(title, body, open){ return `<details class="grp"${open?' open':''}><summary>${title}</summary><div class="grpb">${body}</div></details>`; }
+const meterOpts = [['txv','TXV'],['piston','Piston (fixed orifice)'],['eev','EEV']];
+function buildControls(){
+  CTL.length = 0;
+  let h = '';
+  h += grp('Test conditions', `<div class="chips" id="presets"></div>` +
+    num('idDB','Indoor dry bulb','°F',55,95,1, () => cfg.cond.idDB, v => cfg.cond.idDB = v) +
+    num('idWB','Indoor wet bulb','°F',40,80,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB)) +
+    num('odDB','Outdoor dry bulb','°F',-10,125,1, () => cfg.cond.odDB, v => cfg.cond.odDB = v, {hide: () => cfg.outdoor.type === 'water'}) +
+    num('odWB','Outdoor wet bulb','°F',-12,85,1, () => cfg.cond.odWB, v => cfg.cond.odWB = Math.min(v, cfg.cond.odDB), {hide: () => cfg.outdoor.type === 'water'}) +
+    num('ewt','Entering water','°F',30,110,1, () => cfg.water.ewt, v => cfg.water.ewt = v, {hide: () => cfg.outdoor.type !== 'water'}) +
+    num('gpm','Water flow','gpm',1,40,0.5, () => cfg.water.gpm, v => cfg.water.gpm = v, {hide: () => cfg.outdoor.type !== 'water'}), true);
+  h += grp('Refrigerant & charge',
+    sel('refr','Refrigerant', Object.keys(FL).map(k => [k,k]), () => cfg.refrigerant, v => { cfg.refrigerant = v; rematch(`Switched to ${v}: compressor, metering, switches and factory charge re-matched.`); }) +
+    sel('tons','Nominal size', TONS.map(t => [t, t + ' ton']), () => cfg.tons, v => { cfg.tons = +v; rematch(`Resized to ${v} tons and re-matched.`); }) +
+    sel('cmode','Charging mode', [['realistic','Realistic — set charge & metering'],['sandbox','Sandbox — set SH/SC targets']], () => cfg.chargeMode, v => cfg.chargeMode = v) +
+    num('charge','Refrigerant charge','lb',1,40,0.25, () => cfg.charge, v => cfg.charge = v, {hide: () => cfg.chargeMode !== 'realistic', minmax: () => [Math.max(0.5, cfg.matched.charge*0.3), cfg.matched.charge*1.8]}) +
+    num('shT','Target superheat','°F',0,40,0.5, () => cfg.shTarget, v => cfg.shTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
+    num('scT','Target subcooling','°F',0,40,0.5, () => cfg.scTarget, v => cfg.scTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
+    num('lineLen','Line set length','ft',10,150,5, () => cfg.lineLen, v => cfg.lineLen = v) +
+    `<div class="note" id="chargeNote"></div><button class="btn" id="rematchBtn">Re-match system (factory charge & metering)</button>`, true);
+  h += grp('Metering devices',
+    sel('idMeter','Indoor (cooling) device', meterOpts, () => cfg.indoor.meter, v => cfg.indoor.meter = v) +
+    num('idTxv','Indoor TXV static SH','°F',1,16,0.5, () => cfg.indoor.txvSet, v => cfg.indoor.txvSet = v, {hide: () => cfg.indoor.meter !== 'txv'}) +
+    num('idEev','Indoor EEV target SH','°F',2,20,0.5, () => cfg.indoor.eevSH, v => cfg.indoor.eevSH = v, {hide: () => cfg.indoor.meter !== 'eev'}) +
+    num('idPis','Indoor piston bore','in',0.030,0.120,0.001, () => cfg.indoor.piston || cfg.matched.in.piston, v => cfg.indoor.piston = v, {hide: () => cfg.indoor.meter !== 'piston', dec:3}) +
+    sel('odMeter','Outdoor (heating) device', meterOpts, () => cfg.outdoor.meter, v => cfg.outdoor.meter = v) +
+    num('odTxv','Outdoor TXV static SH','°F',1,16,0.5, () => cfg.outdoor.txvSet, v => cfg.outdoor.txvSet = v, {hide: () => cfg.outdoor.meter !== 'txv'}) +
+    num('odEev','Outdoor EEV target SH','°F',2,20,0.5, () => cfg.outdoor.eevSH, v => cfg.outdoor.eevSH = v, {hide: () => cfg.outdoor.meter !== 'eev'}) +
+    num('odPis','Outdoor piston bore','in',0.030,0.120,0.001, () => cfg.outdoor.piston || cfg.matched.out.piston, v => cfg.outdoor.piston = v, {hide: () => cfg.outdoor.meter !== 'piston', dec:3}) +
+    `<div class="note">The active device is the one on the evaporator side: indoor in cooling, outdoor in heating. Turning a TXV adjusting stem changes its static superheat; operating superheat sits a few degrees above it.</div>`);
+  h += grp('Compressor',
+    sel('ctype','Type', [['single','Single-speed scroll'],['two','Two-stage scroll'],['inv','Inverter (variable speed)']], () => cfg.comp.type, v => cfg.comp.type = v) +
+    sel('cstage','Stage', [['high','High (100%)'],['low','Low (67%)']], () => cfg.comp.stage, v => cfg.comp.stage = v, {hide: () => cfg.comp.type !== 'two'}) +
+    num('cspd','Inverter speed','%',30,120,1, () => cfg.comp.speed, v => cfg.comp.speed = v, {hide: () => cfg.comp.type !== 'inv'}));
+  h += grp('Coils',
+    sel('idType','Indoor coil', [['tf','Tube & fin (A-coil)'],['mc','Microchannel']], () => cfg.indoor.type, v => { cfg.indoor.type = v; logEvent('Indoor coil changed — charge NOT adjusted. Re-match to restore factory charge.'); }) +
+    num('idSize','Indoor coil size','%',50,160,5, () => cfg.indoor.size, v => cfg.indoor.size = v) +
+    sel('odType','Outdoor coil', [['tf','Tube & fin (air)'],['mc','Microchannel (air)'],['water','Coaxial water-to-refrigerant']], () => cfg.outdoor.type, v => { cfg.outdoor.type = v; logEvent('Outdoor coil changed — charge NOT adjusted. Re-match to restore factory charge.'); }) +
+    num('odSize','Outdoor coil size','%',50,160,5, () => cfg.outdoor.size, v => cfg.outdoor.size = v) +
+    `<div class="note">Size is relative to the matched coil (face area and rows). Microchannel coils hold far less refrigerant, so they are very sensitive to charge.</div>`);
+  h += grp('Airflow',
+    sel('btype','Indoor blower', [['ecm','ECM (constant airflow)'],['psc','PSC (multi-speed)']], () => cfg.blower.type, v => cfg.blower.type = v) +
+    num('bcfm','Blower airflow setting','cfm',200,4000,25, () => cfg.blower.cfm, v => cfg.blower.cfm = v, {minmax: () => [Math.round(150*cfg.tons/25)*25, Math.round(600*cfg.tons/25)*25]}) +
+    num('esp','Duct external static','in. w.c.',0.1,1.5,0.05, () => cfg.blower.esp, v => cfg.blower.esp = v, {dec:2}) +
+    num('odpct','Outdoor fan airflow','%',0,120,5, () => cfg.odFan.pct, v => cfg.odFan.pct = v, {hide: () => cfg.outdoor.type === 'water'}) +
+    `<div class="note">PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.</div>`);
+  h += grp('Safety switches & control',
+    num('hpsO','High-pressure switch opens','psig',200,750,5, () => cfg.sw.hpsOpen, v => cfg.sw.hpsOpen = v) +
+    num('hpsC','High-pressure switch closes','psig',150,700,5, () => cfg.sw.hpsClose, v => cfg.sw.hpsClose = v) +
+    num('lpsO','Low-pressure switch opens','psig',0,150,1, () => cfg.sw.lpsOpen, v => cfg.sw.lpsOpen = v) +
+    num('lpsC','Low-pressure switch closes','psig',5,200,1, () => cfg.sw.lpsClose, v => cfg.sw.lpsClose = v) +
+    num('lpsB','LPS bypass on start','s',0,300,5, () => cfg.sw.lpsBypass, v => cfg.sw.lpsBypass = v) +
+    num('asc','Anti-short-cycle delay','s',0,600,15, () => cfg.sw.asc, v => cfg.sw.asc = v) +
+    num('maxT','Trips before lockout','',1,6,1, () => cfg.sw.maxTrips, v => cfg.sw.maxTrips = v) +
+    `<button class="btn" id="swDefault">Restore default switch settings</button>`);
+  h += grp('Electrical supply & capacitors',
+    num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v) +
+    num('compCap','Compressor run cap (rated)','µF',10,120,0.5, () => cfg.elec.compCap, v => cfg.elec.compCap = v) +
+    num('fanCap','Outdoor fan cap (rated)','µF',2,15,0.5, () => cfg.elec.fanCap, v => cfg.elec.fanCap = v) +
+    num('blowerCap','Blower cap (PSC only)','µF',3,20,0.5, () => cfg.elec.blowerCap, v => cfg.elec.blowerCap = v));
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
+  $('tab-controls').innerHTML = h;
+  // presets
+  renderPresets();
+  // wire
+  for (const c of CTL) {
+    const el = $(c.id);
+    if (c.type === 'num') {
+      const r = $(c.id + '-r');
+      el.addEventListener('change', () => applyCtl(c, +el.value));
+      r.addEventListener('input', () => { el.value = (+r.value).toFixed(c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : 1) : 0)); });
+      r.addEventListener('change', () => applyCtl(c, +r.value));
+    } else el.addEventListener('change', () => applyCtl(c, el.value));
+  }
+  document.querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => {
+    const c = CTL.find(x => x.id === b.dataset.step); applyCtl(c, +(c.get()) + (+b.dataset.dir) * c.step);
+  }));
+  $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
+  $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); change('Switch settings restored to defaults'); });
+  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; change('Factory defaults restored', true); });
+  syncControls();
+}
+function renderPresets(){
+  const list = PRESETS[cfg.mode];
+  $('presets').innerHTML = list.map((p,i) => `<button class="chip" data-pre="${i}">${esc(p.t)}</button>`).join('');
+  $('presets').querySelectorAll('[data-pre]').forEach(b => b.addEventListener('click', () => {
+    const p = list[+b.dataset.pre]; Object.assign(cfg.cond, p.c); cfg.water.ewt = p.w; change(`Test condition: ${p.t}`);
+  }));
+}
+function applyCtl(c, v){
+  if (c.type === 'num') {
+    if (!isFinite(v)) { syncControls(); return; }
+    const [mn, mx] = c.minmax ? c.minmax() : [c.min, c.max];
+    v = Math.min(mx, Math.max(mn, Math.round(v / c.step) * c.step));
+  }
+  const before = c.get();
+  c.set(v);
+  if (String(before) === String(c.get())) { syncControls(); return; }
+  const unit = c.unit ? ' ' + c.unit : '';
+  const show = x => typeof x === 'number' ? (+x.toFixed(c.dec ?? 2)).toString() : x;
+  change(`${c.label}: ${show(before)} → ${show(c.get())}${unit}`, c.id === 'refr' || c.id === 'tons');
+}
+function syncControls(){
+  for (const c of CTL) {
+    const w = $('w-' + c.id); if (w) w.style.display = c.hide && c.hide() ? 'none' : '';
+    const v = c.get();
+    if (c.type === 'num') {
+      const dec = c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : (c.step < 0.5 ? 2 : 1)) : 0);
+      $(c.id).value = (+v).toFixed(dec);
+      const r = $(c.id + '-r'); const [mn, mx] = c.minmax ? c.minmax() : [c.min, c.max];
+      r.min = mn; r.max = mx; r.value = v;
+    } else $(c.id).value = String(v);
+  }
+  const m = cfg.matched;
+  const llAdj = (cfg.lineLen - 25) * 0.6 / 16;
+  $('chargeNote').innerHTML = `Factory charge ${m.charge} lb (for 25 ft). ` + (cfg.lineLen !== 25 ? `For ${cfg.lineLen} ft the installer would ${llAdj > 0 ? 'add' : 'remove'} about ${Math.abs(llAdj).toFixed(2)} lb (0.6 oz/ft of 3/8" liquid line). ` : '') +
+    (cfg.chargeMode === 'sandbox' && res ? `<br>This target needs <b>${res.inv.toFixed(2)} lb</b> in the system right now.` : `Charge is now ${(cfg.charge - m.charge >= 0 ? '+' : '')}${(cfg.charge - m.charge).toFixed(2)} lb vs factory.`);
+  document.querySelectorAll('#presets .chip').forEach((b,i) => { const p = PRESETS[cfg.mode][i]; const on = Object.keys(p.c).every(k => cfg.cond[k] === p.c[k]) && (cfg.outdoor.type !== 'water' || cfg.water.ewt === p.w); b.classList.toggle('on', on); });
+}
+
+/* ---------- readings & electrical & P-h ---------- */
+function renderReadings(){
+  const r = res, a = r.air, heat = cfg.mode === 'heat', on = S.comp;
+  let h = '<h2>Refrigerant ports</h2><div class="tw"><table><tr><th>Port</th><th>Pressure</th><th>Temp</th><th>Sat °F</th><th>Condition</th><th>h</th></tr>';
+  for (const p of r.points) {
+    const sat = p.phase === 'liq' ? p.tb : p.phase === 'vap' ? p.td : null;
+    h += `<tr><td><span class="dot">${p.i}</span>${esc(p.name)}</td><td class="n">${on ? fmtP(p.P) : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? f1(p.tb)+'–'+f1(p.td) : f1(sat)) : '—'}</td><td>${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vapor') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
+  }
+  h += '</table></div>';
+  const airRow = (lbl, A) => A.kind === 'air'
+    ? `<tr><td>${lbl} in</td><td class="n">${f1(A.in.db)}</td><td class="n">${f1(A.in.wb)}</td><td class="n">${f0(A.in.rh)}%</td><td class="n">${f1(A.in.dp)}</td><td class="n">${f1(A.in.gr)}</td><td class="n">${A.in.h.toFixed(2)}</td></tr><tr><td>${lbl} out</td><td class="n">${on?f1(A.out.db):'—'}</td><td class="n">${on?f1(A.out.wb):'—'}</td><td class="n">${on?f0(A.out.rh)+'%':'—'}</td><td class="n">${on?f1(A.out.dp):'—'}</td><td class="n">${on?f1(A.out.gr):'—'}</td><td class="n">${on?A.out.h.toFixed(2):'—'}</td></tr>`
+    : `<tr><td>${lbl} water in / out</td><td class="n" colspan="6">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
+  h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
+  const Qref = heat ? a.Qc : a.Qe;
+  const IA = a.indoor, st = heat ? r.ctx.cond.stream : r.ctx.evap.stream;
+  const airQ = IA.kind === 'air' ? (heat ? st.C * (IA.out.db - IA.in.db) : st.ma * (IA.in.h - IA.out.h)) : Qref;
+  const ev = a.evap;
+  h += '<h2 style="margin-top:14px">Capacity & heat balance</h2>' + kv([
+    ['Refrigerant-side', on ? f0(Qref) + ' Btu/h' : '—'],
+    ['Air/water-side', on ? f0(airQ) + ' Btu/h' : '—'],
+    ['Heat balance', on ? ((airQ - Qref) / Qref * 100).toFixed(1) + '% (ASHRAE 37 limit ±6%)' : '—'],
+    !heat && ev.kind === 'air' && ['Sensible', on ? f0(ev.sens) + ' Btu/h' : '—'],
+    !heat && ev.kind === 'air' && ['Latent', on ? f0(ev.lat) + ' Btu/h' : '—'],
+    !heat && ev.kind === 'air' && ['SHR', on ? (ev.sens / a.Qe).toFixed(2) : '—'],
+    ['Heat rejected/absorbed', on ? f0(heat ? a.Qe : a.Qc) + ' Btu/h' : '—'],
+    ['Mass flow', on ? f0(r.m) + ' lb/h' : '—'], ['Compression ratio', on ? r.PR.toFixed(2) : '—'],
+  ]);
+  const mp = r.mParts, tot = Object.values(mp).reduce((x,y) => x+y, 0);
+  const cols = {cond:'var(--cond)', evap:'var(--mix)', liquidLine:'var(--liq)', vaporLine:'var(--suct)', compressorAcc:'var(--muted)'};
+  const names = {cond:'Condenser', evap:'Evaporator', liquidLine:'Liquid line', vaporLine:'Vapor line', compressorAcc:'Compressor, accumulator, oil'};
+  h += `<h2 style="margin-top:14px">Where the charge sits (${tot.toFixed(2)} lb)</h2><div class="bar">${Object.entries(mp).map(([k,v]) => `<i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i>`).join('')}</div>` +
+    Object.entries(mp).map(([k,v]) => `<div class="mini"><span>${names[k]}</span><div class="bar"><i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i></div><b>${v.toFixed(2)} lb</b></div>`).join('');
+  $('tab-readings').innerHTML = h;
+}
+function renderElec(){
+  const e = elecRes, on = S.comp, c = e.comp, bOn = S.call && cfg.blowerOn;
+  let h = `<h2>Outdoor unit</h2>` + kv([
+    ['Line voltage L1–L2', f0(e.V) + ' V'], ['Unit total', on ? f1(e.odUnitA) + ' A' : '0.0 A'],
+    ['Compressor C', on ? f1(c.A) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor R', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor S', on ? f1(c.S) + ' A' : '0.0 A'],
+    ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], c.type === 'inv' && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
+    cfg.outdoor.type !== 'water' && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
+  ]);
+  if (c.type !== 'inv') h += `<h2 style="margin-top:12px">Capacitor check (run cap, live)</h2>` + kv([
+    ['Herm terminal (C)', `${cfg.elec.compCap} µF rated`], ['Voltage across cap', on ? f0(c.capV) + ' V' : '—'], ['Start winding amps', on ? f1(c.S) + ' A' : '—'],
+    ['Calculated µF', on ? f1(c.capMeas) : '—'], ['Within ±6%?', on ? (Math.abs(c.capMeas / cfg.elec.compCap - 1) <= 0.06 ? 'yes' : 'NO') : '—'],
+    cfg.outdoor.type !== 'water' && ['Fan cap', on ? `${f1(e.odFan.capMeas)} µF of ${cfg.elec.fanCap}` : '—'],
+  ]) + `<p class="hint">µF = start-winding amps × 2652 ÷ volts across the capacitor.</p>`;
+  h += `<h2 style="margin-top:12px">Indoor unit</h2>` + kv([
+    ['Blower', bOn ? f1(e.blower.A) + ' A · ' + f0(e.blower.W) + ' W' : '0.0 A'], ['Airflow', f0(res.ctx.idCfm) + ' cfm'], ['External static', cfg.blower.esp.toFixed(2) + ' in.'],
+    e.blower.capRated && ['Blower cap', bOn ? `${f1(e.blower.capMeas)} µF of ${e.blower.capRated}` : '—'],
+  ]);
+  h += `<h2 style="margin-top:12px">System</h2>` + kv([['Total power', on ? f0(e.totalW) + ' W' : f0(bOn ? e.blower.W : 0) + ' W'], ['COP', on ? (disp.COP).toFixed(2) : '—'], ['EER (Btu/Wh)', on ? (disp.COP * 3.412).toFixed(1) : '—']]);
+  $('tab-elec').innerHTML = h;
+}
+function renderLog(){ const el = $('tab-log'); if (!el) return; const lb = $('logbox'); if (lb) lb.innerHTML = logRows.slice(0,15).map(r => `<div class="note" style="${r.kind==='bad'?'color:#ff9a87':''}"><span style="font-family:var(--f-num)">${r.t}</span> ${esc(r.msg)}</div>`).join('') || '<div class="note">No events yet.</div>'; el.innerHTML = '<h2>Event log</h2>' + (logRows.length ? '<div class="tw"><table>' + logRows.map(r => `<tr><td class="n" style="width:56px">${r.t}</td><td style="text-align:left;white-space:normal;${r.kind==='bad'?'color:#ff9a87':''}">${esc(r.msg)}</td></tr>`).join('') + '</table></div>' : '<p class="note">Trips, restarts and changes appear here.</p>'); }
+
+function drawPH(){
+  const cv = $('ph'); if (!cv.offsetParent) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = 360;
+  cv.width = W * dpr; cv.height = H * dpr; const x = cv.getContext('2d'); x.scale(dpr, dpr);
+  const F_ = F(), css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const L = 46, R = 12, T = 14, B = 34;
+  const Pmin = Math.max(F_.Pmin, 15), Pmax = F_.Pmax;
+  const hmin = F_.hLiqT(-40) - 5, hmax = F_.vap(Math.min(Pmax*0.9, 400), 120).h;
+  const X = h => L + (h - hmin) / (hmax - hmin) * (W - L - R);
+  const Y = P => T + (1 - (Math.log(P) - Math.log(Pmin)) / (Math.log(Pmax) - Math.log(Pmin))) * (H - T - B);
+  x.font = '11px IBM Plex Mono, monospace'; x.fillStyle = col('--muted'); x.strokeStyle = col('--line'); x.lineWidth = 1;
+  [25,50,100,200,300,400,600].forEach(pg => { const P = pg + PATM; if (P < Pmin || P > Pmax) return; const y = Y(P); x.beginPath(); x.moveTo(L, y); x.lineTo(W - R, y); x.stroke(); x.fillText(pg, 4, y + 4); });
+  for (let h = Math.ceil(hmin/20)*20; h < hmax; h += 20) { const xx = X(h); x.beginPath(); x.moveTo(xx, T); x.lineTo(xx, H - B); x.stroke(); x.fillText(h, xx - 8, H - B + 14); }
+  x.fillText('psig', 4, T + 2); x.fillText('enthalpy, Btu/lb', W - 130, H - 6);
+  // dome
+  x.lineWidth = 2; x.strokeStyle = col('--muted'); x.beginPath();
+  const N = 60; const pts = [];
+  for (let i = 0; i <= N; i++) { const P = Pmin * Math.pow(Pmax / Pmin, i / N); pts.push(P); }
+  pts.forEach((P,i) => { const xx = X(F_.hBub(P)), y = Y(P); i ? x.lineTo(xx, y) : x.moveTo(xx, y); });
+  for (let i = pts.length - 1; i >= 0; i--) { const P = pts[i]; x.lineTo(X(F_.hDew(P)), Y(P)); }
+  x.stroke();
+  if (!S.comp) { x.fillStyle = col('--muted'); x.font = '13px Barlow, sans-serif'; x.fillText('Compressor off — no cycle to draw.', L + 20, T + 30); return; }
+  // cycle path in flow order
+  const p = res.points, heat = cfg.mode === 'heat';
+  const order = heat ? [9,1,8,7,6,5,4,3,2,9] : [9,1,2,3,4,5,6,7,8,9];
+  x.lineWidth = 2.5; x.strokeStyle = col('--accent'); x.beginPath();
+  order.forEach((n,i) => { const q = p[n-1], xx = X(q.h), y = Y(q.P); i ? x.lineTo(xx, y) : x.moveTo(xx, y); }); x.stroke();
+  order.slice(0,-1).forEach(n => { const q = p[n-1], xx = X(q.h), y = Y(q.P); x.fillStyle = col('--bg'); x.beginPath(); x.arc(xx, y, 7, 0, 7); x.fill(); x.strokeStyle = col('--accent'); x.lineWidth = 1.5; x.stroke(); x.fillStyle = col('--accent'); x.font = '600 9px IBM Plex Mono, monospace'; x.fillText(n, xx - 3, y + 3); });
+  x.fillStyle = col('--ink'); x.font = '12px Barlow, sans-serif';
+  x.fillText(`${cfg.refrigerant} · refrigeration effect ${(res.hEo - res.hEi).toFixed(1)} Btu/lb · compression ${(res.hDis - res.hEo).toFixed(1)} Btu/lb`, L + 6, T + 12);
+}
+
+/* ---------- change pipeline ---------- */
+function change(what, big){
+  const prev = VM && S.comp ? Object.assign({}, VM) : null;
+  solveNow();
+  if (big || !disp) disp = Object.assign({}, S.comp ? VM : offVM());
+  save();
+  $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
+  if (prev && S.comp) { renderChanges(what, prev, VM); flashDeltas(prev, VM); }
+  else $('changes').innerHTML = `<h2>What changed</h2><div class="head">${esc(what)}</div><div class="note">Compressor is not running — start it to see the system respond.</div>`;
+  if (what) logEvent(what);
+  syncControls(); renderAll();
+}
+function renderAll(){ renderSchemStatic(); updateSchemLive(); renderProbe(); renderAlerts(); renderReadings(); renderElec(); drawPH(); renderTiles(); renderStatus(); }
+
+/* ---------- wiring ---------- */
+function setMode(m){
+  if (cfg.mode === m) return;
+  const sc = cfg.savedCond; sc[cfg.mode] = Object.assign({}, cfg.cond, {ewt: cfg.water.ewt});
+  cfg.mode = m; const n = sc[m]; cfg.cond = {idDB:n.idDB, idWB:n.idWB, odDB:n.odDB, odWB:n.odWB}; cfg.water.ewt = n.ewt;
+  $('mCool').classList.toggle('on', m === 'cool'); $('mHeat').classList.toggle('on', m === 'heat');
+  renderPresets();
+  lastX = null;
+  if (S.comp) { S.comp = false; S.asc = Math.min(cfg.sw.asc, 30); logEvent(`Reversing valve ${m === 'heat' ? 'energized (heating)' : 'de-energized (cooling)'} — compressor restarts after pressures equalize.`); }
+  change(`Mode: ${m === 'heat' ? 'heating' : 'cooling'}`);
+}
+$('mCool').addEventListener('click', () => setMode('cool'));
+$('mHeat').addEventListener('click', () => setMode('heat'));
+$('callBtn').addEventListener('click', () => { S.call = !S.call; logEvent(S.call ? 'Thermostat calling.' : 'Thermostat call removed.'); renderAll(); });
+$('resetCtl').addEventListener('click', () => { S.lock = false; S.trip = null; S.trips = 0; logEvent('Control reset by technician.'); renderAll(); });
+document.querySelectorAll('[data-spd]').forEach(b => b.addEventListener('click', () => { S.speed = +b.dataset.spd; document.querySelectorAll('[data-spd]').forEach(x => x.classList.toggle('on', x === b)); }));
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + b.dataset.tab));
+  if (b.dataset.tab === 'ph') drawPH();
+}));
+window.addEventListener('resize', () => drawPH());
+function setView(v){
+  document.body.dataset.view = v;
+  document.querySelectorAll('.bnav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  if (v !== 'system') {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === v));
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + v));
+    if (v === 'ph') drawPH(); if (v === 'elec') renderElec();
+  }
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('.bnav button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+document.body.dataset.view = 'system';
+
+/* ---------- boot ---------- */
+if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
+$('mCool').classList.toggle('on', cfg.mode === 'cool'); $('mHeat').classList.toggle('on', cfg.mode === 'heat');
+buildTiles(); buildSchem();
+solveNow(); disp = Object.assign({}, VM);
+buildControls();
+$('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
+logEvent('Simulator started at steady state.');
+renderAll();
+let lastT = performance.now(), slow = 0;
+setInterval(() => {
+  const now = performance.now(), dt = Math.min(1, (now - lastT) / 1000); lastT = now;
+  const wasComp = S.comp;
+  tick(dt);
+  if (wasComp !== S.comp) renderAll();
+  if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); }
+}, 250);
+})();
+</script>
+</body>
+</html>
