@@ -775,6 +775,10 @@ const save = () => { try { localStorage.setItem('hpct-cfg', JSON.stringify(cfg))
 const F = () => FL[cfg.refrigerant];
 const idW = () => E.isWater(cfg.indoor.type), odW = () => E.isWater(cfg.outdoor.type);
 const FLUIDOPTS = Object.entries(E.WFLUID).map(([k,v]) => [k, v.name]);
+const roleOf = side => ((side === 'od') === (cfg.mode === 'cool')) ? 'Condenser' : 'Evaporator';
+const fzDefault = k => k === 'water' || !k ? 38 : E.WFLUID[k].fp + 8;
+const LBL = l => typeof l === 'function' ? l() : l;
+function ensureFz(){ if (cfg.sw && cfg.sw.fzOd == null) { cfg.sw.fzOd = fzDefault(cfg.water.fluid); cfg.sw.fzId = fzDefault(cfg.idWater.fluid); cfg.sw.fzOn = true; } }
 
 function rematch(note){
   const t = cfg.tons;
@@ -784,7 +788,7 @@ function rematch(note){
   cfg.indoor.piston = 0; cfg.outdoor.piston = 0;
   cfg.matched = E.match(cfg, FL);
   cfg.charge = cfg.matched.charge;
-  cfg.sw = E.defaultSwitches(F());
+  cfg.sw = E.defaultSwitches(F()); ensureFz();
   lastX = null;
   if (note) logEvent(note);
 }
@@ -865,6 +869,7 @@ function buildVM(r){
     SHevap: r.ze, amps: e.comp.A, Q: heat ? a.Qc : a.Qe, kw: e.totalW / 1000,
     COP: (heat ? a.Qc : a.Qe) / (e.totalW * 3.412), m: r.m,
     supply: a.indoor.kind === 'air' ? a.indoor.out.db : a.indoor.tout,
+    lwtId: a.indoor.kind === 'water' ? a.indoor.tout : NaN, lwtOd: a.outdoor.kind === 'water' ? a.outdoor.tout : NaN,
   };
   pts.forEach(p => { v['P'+p.i] = p.P; v['T'+p.i] = p.T; });
   return v;
@@ -874,7 +879,7 @@ function offVM(){
   const odT = odW() ? cfg.water.ewt : c.odDB, idT = idW() ? cfg.idWater.ewt : c.idDB;
   const Teq = Math.min(idT, odT) + 0.25 * Math.abs(idT - odT);
   const Peq = F_.pDew(Teq);
-  const v = { lowP: Peq, highP: Peq, Tsuc: odT, Tliq: odT, Tdis: odT + 15, Pd: Peq, Ps: Peq, SH: NaN, SC: NaN, amps: 0, Q: 0, kw: (cfg.blowerOn && S.call ? (elecRes ? elecRes.blower.W : 0) : 0)/1000, COP: 0, m: 0, supply: idT };
+  const v = { lowP: Peq, highP: Peq, Tsuc: odT, Tliq: odT, Tdis: odT + 15, Pd: Peq, Ps: Peq, SH: NaN, SC: NaN, amps: 0, Q: 0, kw: (cfg.blowerOn && S.call ? (elecRes ? elecRes.blower.W : 0) : 0)/1000, COP: 0, m: 0, supply: idT, lwtId: idW() ? cfg.idWater.ewt : NaN, lwtOd: odW() ? cfg.water.ewt : NaN };
   for (let i = 1; i <= 9; i++) { v['P'+i] = Peq; v['T'+i] = (i >= 5 && i <= 7) ? idT : odT; }
   return v;
 }
@@ -884,7 +889,7 @@ const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, t
 let disp = null, logRows = [];
 function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60); logRows.unshift({t: `${m}:${String(s).padStart(2,'0')}`, msg, kind}); if (logRows.length > 60) logRows.pop(); renderLog(); }
 function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
-function trip(kind, why){ S.comp = false; S.trip = kind; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
+function trip(kind, why){ S.comp = false; S.trip = kind; S.tripWhy = why; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
   if (S.trips >= cfg.sw.maxTrips) { S.lock = true; logEvent(`Control LOCKOUT after ${S.trips} trips. Find the cause, then press Reset control.`, 'bad'); } }
 function tick(dtReal){
   const dt = dtReal * S.speed; S.t += dt;
@@ -893,6 +898,8 @@ function tick(dtReal){
   if (S.trip === 'HPS' && g(disp.Pd) <= sw.hpsClose) { logEvent('High-pressure switch closed again (auto reset).'); S.trip = null; }
   if (S.trip === 'LPS' && g(disp.Ps) >= sw.lpsClose) { logEvent('Low-pressure switch closed again (auto reset).'); S.trip = null; }
   if (S.trip === 'IOL' && disp.Tdis <= 190) { logEvent('Compressor internal overload reset (motor cooled).'); S.trip = null; }
+  if (S.trip === 'FRZ') { const t = S.tripSide === 'id' ? disp.lwtId : disp.lwtOd, co = S.tripSide === 'id' ? sw.fzId : sw.fzOd;
+    if (!(idW() || odW()) || sw.fzOn === false || !isFinite(t) || t >= co + 10) { logEvent('Freeze protection reset — loop temperature recovered.'); S.trip = null; } }
   const want = S.call && !S.lock && !S.trip;
   if (!S.comp && want && S.asc <= 0) { S.comp = true; S.tRun = 0; logEvent('Compressor started.'); }
   if (S.comp && !want) { S.comp = false; S.asc = sw.asc; logEvent('Thermostat satisfied / call removed — compressor off.'); }
@@ -901,6 +908,8 @@ function tick(dtReal){
     if (g(disp.Pd) >= sw.hpsOpen) trip('HPS', `discharge reached ${g(disp.Pd).toFixed(0)} psig (opens at ${sw.hpsOpen})`);
     else if (S.tRun > sw.lpsBypass && g(disp.Ps) <= sw.lpsOpen) trip('LPS', `suction fell to ${fmtP(disp.Ps)} (opens at ${sw.lpsOpen} psig)`);
     else if (disp.Tdis >= 285) trip('IOL', `discharge line ${disp.Tdis.toFixed(0)}°F — motor overheated`);
+    else if (sw.fzOn !== false && idW() && disp.lwtId <= sw.fzId) { S.tripSide = 'id'; trip('FRZ', `${roleOf('id').toLowerCase()} leaving ${E.WFLUID[cfg.idWater.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtId)}°F (cut-out ${sw.fzId}°F)`); }
+    else if (sw.fzOn !== false && odW() && disp.lwtOd <= sw.fzOd) { S.tripSide = 'od'; trip('FRZ', `${roleOf('od').toLowerCase()} leaving ${E.WFLUID[cfg.water.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtOd)}°F (cut-out ${sw.fzOd}°F)`); }
   }
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
   if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
@@ -957,7 +966,7 @@ function renderStatus(){
   const p = $('statePill');
   let txt = 'Running', cls = 'run';
   if (S.lock) { txt = 'Lockout'; cls = 'trip'; }
-  else if (S.trip) { txt = S.trip === 'HPS' ? 'High-pressure trip' : S.trip === 'LPS' ? 'Low-pressure trip' : 'Overload trip'; cls = 'trip'; }
+  else if (S.trip) { txt = {HPS:'High-pressure trip', LPS:'Low-pressure trip', IOL:'Overload trip', FRZ:'Freeze protection trip'}[S.trip]; cls = 'trip'; }
   else if (!S.call) { txt = 'Off — no call'; cls = 'idle'; }
   else if (!S.comp) { txt = 'Waiting (anti-short-cycle)'; cls = 'wait'; }
   p.textContent = txt; p.className = 'pill ' + cls;
@@ -983,7 +992,7 @@ const SEG = {
   rvacc: {d:'M90 184 V202', cool:'lv', heat:'lv', rev:[0,0]},
   acc:   {d:'M90 242 V266 H160 V256', cool:'lv', heat:'lv', rev:[0,0]},
 };
-const TP = [[125,160],[16,130],[196,92],[206,150],[248,150],[269,126],[384,150],[206,250],[125,266]];
+const TP = [[160,192],[16,130],[196,92],[206,150],[248,150],[269,126],[384,150],[206,250],[125,266]];
 let selected = {kind:'part', id:'comp'};
 function buildSchem(){
   const svg = $('schem');
@@ -993,18 +1002,18 @@ function buildSchem(){
     <pattern id="plates" width="3" height="10" patternUnits="userSpaceOnUse"><path d="M1.5 0V10" stroke="#0e1317" stroke-width="1.4" opacity=".55"/></pattern>
     <clipPath id="odClip"><rect id="odClipR" x="24" y="52" width="162" height="36" rx="4"/></clipPath>
     <clipPath id="idClip"><rect id="idClipR" x="282" y="94" width="86" height="32" rx="4"/></clipPath></defs>`;
-  s += `<rect x="6" y="20" width="200" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text x="16" y="34" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">OUTDOOR UNIT</text>`;
-  s += `<rect x="254" y="20" width="140" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text x="264" y="34" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">INDOOR UNIT</text>`;
-  s += `<text x="230" y="164" text-anchor="middle" fill="var(--muted)" font-size="8">liquid line</text><text x="230" y="264" text-anchor="middle" fill="var(--muted)" font-size="8">vapor line</text><text id="lsLen" x="230" y="206" text-anchor="middle" fill="var(--muted)" font-size="8"></text>`;
+  s += `<rect x="6" y="20" width="200" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text id="odTitle" x="16" y="31" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">OUTDOOR UNIT</text>`;
+  s += `<rect x="254" y="20" width="140" height="274" rx="10" fill="#121920" stroke="var(--line)"/><text id="idTitle" x="264" y="31" fill="var(--muted)" font-size="10" font-weight="600" letter-spacing="1.5">INDOOR UNIT</text>`;
+  s += `<text x="230" y="139" text-anchor="middle" fill="var(--muted)" font-size="8">liquid line</text><text x="232" y="271" text-anchor="middle" fill="var(--muted)" font-size="8">vapor line</text><text id="lsLen" x="230" y="206" text-anchor="middle" fill="var(--muted)" font-size="8"></text>`;
   // air text
-  s += `<text id="odAir" x="104" y="44" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idSup" x="324" y="52" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idRet" x="324" y="284" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text>`;
+  s += `<text id="odAir" x="104" y="45" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idSup" x="324" y="52" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text><text id="idRet" x="324" y="284" text-anchor="middle" fill="var(--ink)" font-size="9.5"></text>`;
   s += `<g id="idArrow"><path d="M324 272 V60" stroke="var(--line)" stroke-width="10" opacity=".35"/><path d="M318 66 l6 -8 l6 8" fill="none" stroke="var(--muted)" stroke-width="1.5"/></g>`;
   // pipes
   for (const k in SEG) s += `<path id="seg-${k}" d="${SEG[k].d}" fill="none" stroke="var(--off)" stroke-width="${k==='vl'||k==='vend'||k==='rvvl'?4.5:3}" stroke-linejoin="round" stroke-linecap="round"/><path id="flow-${k}" d="${SEG[k].d}" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" class="flow"/>`;
   // outdoor coil
   s += `<g class="comp" data-part="odcoil"><g id="odBody"></g><g id="odZones" clip-path="url(#odClip)"></g><g id="odOver" pointer-events="none"></g><text x="100" y="99" text-anchor="middle" fill="var(--muted)" font-size="8.5" id="odCoilLbl">Outdoor coil</text></g>`;
   // fan
-  s += `<g class="comp" data-part="odfan"><circle id="odFanBody" cx="112" cy="124" r="17" fill="#1d2731" stroke="var(--line)"/><g id="odFanBlades"><path d="M112 124 L112 110 Q119 113 112 124 M112 124 L126 124 Q123 131 112 124 M112 124 L112 138 Q105 135 112 124 M112 124 L98 124 Q101 117 112 124" fill="var(--muted)"/></g><g id="odPump" style="display:none"><path d="M106 116 L122 124 L106 132 Z" fill="var(--wtr)" opacity=".85"/></g><text x="112" y="152" text-anchor="middle" fill="var(--muted)" font-size="8" id="odFanLbl">Fan</text></g>`;
+  s += `<g class="comp" data-part="odfan"><circle id="odFanBody" cx="96" cy="124" r="17" fill="#1d2731" stroke="var(--line)"/><g id="odFanBlades"><path d="M96 124 L96 110 Q103 113 96 124 M96 124 L110 124 Q107 131 96 124 M96 124 L96 138 Q89 135 96 124 M96 124 L82 124 Q85 117 96 124" fill="var(--muted)"/></g><g id="odPump" style="display:none"><path d="M90 116 L106 124 L90 132 Z" fill="var(--wtr)" opacity=".85"/></g><text x="96" y="152" text-anchor="middle" fill="var(--muted)" font-size="8" id="odFanLbl">Fan</text></g>`;
   // od metering
   s += `<g class="comp" data-part="odmeter"><rect x="188" y="110" width="16" height="16" rx="3" fill="#1d2731" stroke="var(--line)"/><path d="M190 124 L202 112" stroke="var(--muted)" stroke-width="1.3"/><text x="184" y="121" text-anchor="end" fill="var(--muted)" font-size="7" id="odMeterLbl">TXV</text></g>`;
   // RV
@@ -1016,7 +1025,7 @@ function buildSchem(){
   // service valves
   s += `<rect x="202" y="146" width="8" height="8" fill="var(--panel2)" stroke="var(--muted)"/><rect x="202" y="246" width="8" height="8" fill="var(--panel2)" stroke="var(--muted)"/>`;
   // indoor coil
-  s += `<g class="comp" data-part="idcoil"><g id="idBody"></g><g id="idZones" clip-path="url(#idClip)"></g><g id="idOver" pointer-events="none"></g><text x="325" y="85" text-anchor="middle" fill="var(--muted)" font-size="8" id="idCoilLbl">Indoor coil</text></g>`;
+  s += `<g class="comp" data-part="idcoil"><g id="idBody"></g><g id="idZones" clip-path="url(#idClip)"></g><g id="idOver" pointer-events="none"></g><text x="331" y="138" text-anchor="middle" fill="var(--muted)" font-size="7.5" id="idCoilLbl">Indoor coil</text></g>`;
   // id metering
   s += `<g class="comp" data-part="idmeter"><rect x="262" y="142" width="14" height="16" rx="3" fill="#1d2731" stroke="var(--line)"/><path d="M264 156 L274 144" stroke="var(--muted)" stroke-width="1.3"/><text x="258" y="172" fill="var(--muted)" font-size="8" id="idMeterLbl">TXV</text></g>`;
   // blower
@@ -1082,6 +1091,8 @@ function renderSchemStatic(){
   const Z = { des:'var(--hot)', tpc:'var(--cond)', sc:'var(--liq)', tpe:'var(--mix)', sh:'var(--suct)' };
   const condZ = [[f.f1, Z.des],[f.f2, Z.tpc],[f.f3, Z.sc]], evapZ = [[f.ftp, Z.tpe],[f.fsh, Z.sh]];
   drawHX('od', cfg.outdoor.type); drawHX('id', cfg.indoor.type);
+  $('odTitle').textContent = odW() ? roleOf('od').toUpperCase() : 'OUTDOOR UNIT';
+  $('idTitle').textContent = idW() ? roleOf('id').toUpperCase() : 'INDOOR UNIT';
   if (!on) { $('odZones').innerHTML = ''; $('idZones').innerHTML = ''; }
   else if (!heat) { zones('odZones', 24, 52, 162, 36, condZ, false); zones('idZones', 282, 94, 86, 32, evapZ, false); }
   else { zones('odZones', 24, 52, 162, 36, evapZ, true); zones('idZones', 282, 94, 86, 32, condZ, true); }
@@ -1092,14 +1103,14 @@ function renderSchemStatic(){
   const ct = {tf:'tube & fin', mc:'microchannel', water:'coaxial', shell:'shell & tube', plate:'brazed plate'};
   $('odCoilLbl').textContent = `${heat ? 'Evaporator' : 'Condenser'} · ${ct[cfg.outdoor.type]}`;
   $('idCoilLbl').textContent = `${heat ? 'Condenser' : 'Evaporator'} · ${ct[cfg.indoor.type]}`;
-  $('blowerLbl').textContent = idW() ? `Load loop · ${cfg.idWater.gpm} gpm` : `${cfg.blower.type.toUpperCase()} blower`;
+  $('blowerLbl').textContent = idW() ? `${roleOf('id')} loop · ${cfg.idWater.gpm} gpm` : `${cfg.blower.type.toUpperCase()} blower`;
   $('blowerBlades').style.display = idW() ? 'none' : ''; $('idPump').style.display = idW() ? '' : 'none'; $('idArrow').style.display = idW() ? 'none' : '';
   $('blowerBody').setAttribute('stroke', idW() ? 'var(--wtr)' : 'var(--line)');
   $('lsLen').textContent = `${cfg.lineLen} ft line set`;
   const spin = (id, run) => { const el = $(id); el.classList.toggle('spin', !!run); };
   const wtr = odW();
   $('odFanBlades').style.display = wtr ? 'none' : ''; $('odPump').style.display = wtr ? '' : 'none'; $('odFanBody').setAttribute('stroke', wtr ? 'var(--wtr)' : 'var(--line)');
-  $('odFanLbl').textContent = wtr ? `Source loop · ${cfg.water.gpm} gpm` : `Fan ${cfg.odFan.pct}%`;
+  $('odFanLbl').textContent = wtr ? `${roleOf('od')} loop · ${cfg.water.gpm} gpm` : `Fan ${cfg.odFan.pct}%`;
   spin('odFanBlades', on && !wtr && cfg.odFan.pct > 0);
   spin('blowerBlades', S.call && cfg.blowerOn && !idW());
   markSel();
@@ -1107,9 +1118,9 @@ function renderSchemStatic(){
 function updateSchemLive(){
   const a = res.air, heat = cfg.mode === 'heat', on = S.comp;
   const odA = a.outdoor, idA = a.indoor;
-  if (odW()) $('odAir').textContent = on ? `Source water ${f1(odA.tin)}°F in → ${f1(odA.tout)}°F out` : `Source water ${f1(cfg.water.ewt)}°F`;
-  else $('odAir').textContent = on ? `Air ${f0(odA.in.db)}°F in → ${f0(odA.out.db)}°F out` : `Outdoor air ${f0(cfg.cond.odDB)}°F`;
-  if (idW()) { $('idSup').textContent = `Leaving water ${f1(on ? idA.tout : cfg.idWater.ewt)}°F`; $('idRet').textContent = `Entering water ${f1(cfg.idWater.ewt)}°F`; }
+  const io = (k, tin, tout) => on ? `${k} in ${f1(tin)}°F → out ${f1(tout)}°F` : `${k} in ${f1(tin)}°F`;
+  $('odAir').textContent = odW() ? io('Water', odA.tin, odA.tout) : io('Air', odA.in.db, odA.out.db);
+  if (idW()) { $('idSup').textContent = io('Water', idA.tin, idA.tout); $('idRet').textContent = ''; }
   else { $('idSup').textContent = on ? `Supply ${f1(idA.out.db)}°F db` : `Supply ${f0(cfg.cond.idDB)}°F`; $('idRet').textContent = `Return ${f0(cfg.cond.idDB)}/${f0(cfg.cond.idWB)}°F · ${f0(res.ctx.idCfm)} cfm`; }
   $('compA').textContent = `${f1(disp.amps)} A`;
 }
@@ -1145,7 +1156,7 @@ function renderProbe(){
       const isB = id === 'blower', m = isB ? e.blower : e.odFan;
       const loopW = isB ? idW() : odW();
       if (loopW) { const A = isB ? a.indoor : a.outdoor, w = isB ? cfg.idWater : cfg.water, fl = E.WFLUID[w.fluid || 'water'];
-        h = `<h3>${isB ? 'Load' : 'Source'} water loop</h3>` + kv([['Fluid', fl.name], ['Freeze point', fl.fp + '°F'], ['Flow', w.gpm + ' gpm'], ['Entering', f1(w.ewt)+'°F'], ['Leaving', on ? f1(A.tout)+'°F' : '—'], ['ΔT', on ? f1(Math.abs(A.tout - A.tin))+'°F' : '—'], ['Heat moved', on ? f1(Math.abs(A.tout - A.tin) * (isB ? r.ctx.idStream : r.ctx.odStream).C / 1000) + ' kBtu/h' : '—']]) + '<p class="hint">Pump is part of the building or test-stand loop, not the unit.</p>'; }
+        h = `<h3>${roleOf(isB ? 'id' : 'od')} water loop</h3>` + kv([['Fluid', fl.name], ['Freeze point', fl.fp + '°F'], ['Flow', w.gpm + ' gpm'], ['Entering', f1(w.ewt)+'°F'], ['Leaving', on ? f1(A.tout)+'°F' : '—'], ['ΔT', on ? f1(Math.abs(A.tout - A.tin))+'°F' : '—'], ['Heat moved', on ? f1(Math.abs(A.tout - A.tin) * (isB ? r.ctx.idStream : r.ctx.odStream).C / 1000) + ' kBtu/h' : '—']]) + '<p class="hint">Pump is part of the building or test-stand loop, not the unit.</p>'; }
       else h = `<h3>${isB ? cfg.blower.type.toUpperCase() + ' indoor blower' : 'Outdoor fan motor (PSC)'}</h3>` + kv([
         ['Amps', ((isB ? S.call && cfg.blowerOn : on) ? f1(m.A) : '0.0') + ' A'], ['Power', ((isB ? S.call : on) ? f0(m.W) : 0) + ' W'],
         ['Airflow', f0(isB ? r.ctx.idCfm : r.ctx.odCfm) + ' cfm'], isB && ['External static', cfg.blower.esp.toFixed(2) + ' in. w.c.'],
@@ -1208,26 +1219,51 @@ let probeOpen = false;
 /* ---------- alerts ---------- */
 function renderAlerts(){
   const r = res, A = [], heat = cfg.mode === 'heat', sw = cfg.sw, a = r.air;
-  if (!S.comp) { $('alerts').innerHTML = ''; return; }
-  if (r.beyond) A.push(['bad', 'Head pressure would climb past the model range — the high-pressure switch will open.']);
-  else if (r.collapse) A.push(['bad', 'The evaporator is starved — suction pressure will fall until the low-pressure switch opens.']);
+  // when stopped, say why
+  if (!S.comp) {
+    if (S.lock) A.push(['bad', `Locked out after ${S.trips} trips. Last: ${S.tripWhy || '—'}. Fix the cause, then press Reset control.`]);
+    else if (S.trip) A.push(['bad', `${({HPS:'High-pressure switch open', LPS:'Low-pressure switch open', IOL:'Compressor overload open', FRZ:'Freeze protection open'})[S.trip]}: ${S.tripWhy}.`]);
+    for (const side of ['id', 'od']) {
+      if (!(side === 'id' ? idW() : odW())) continue;
+      const w = side === 'id' ? cfg.idWater : cfg.water, fl = E.WFLUID[w.fluid || 'water'], nm = fl.name.toLowerCase();
+      if (w.ewt < fl.fp) A.push(['bad', `${roleOf(side)} entering ${nm} is ${f1(w.ewt)}°F — ${f1(fl.fp - w.ewt)}°F below its ${fl.fp}°F freeze point. That loop would be frozen solid.`]);
+      else if (cfg.sw.fzOn !== false && w.ewt < (side === 'id' ? cfg.sw.fzId : cfg.sw.fzOd) + 10) A.push(['warn', `Freeze protection resets at ${(side === 'id' ? cfg.sw.fzId : cfg.sw.fzOd) + 10}°F, but the ${roleOf(side).toLowerCase()} entering ${nm} is only ${f1(w.ewt)}°F — it will stay open until the loop warms up.`]);
+    }
+    $('alerts').innerHTML = A.map(([k,t]) => `<div class="alert ${k==='bad'?'bad':k==='info'?'info':''}">${esc(t)}</div>`).join('');
+    return;
+  }
+  if (r.beyond) A.push(['bad', `Head pressure is climbing past ${sw.hpsOpen} psig — the high-pressure switch will open.`]);
+  else if (r.collapse) A.push(['bad', `The evaporator is starved — suction is falling toward the ${sw.lpsOpen} psig low-pressure cut-out.`]);
   else if (!r.converged) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
+  if (g(r.Ps) < 0) A.push(['bad', `Suction is in a vacuum (${fmtP(r.Ps)}).`]);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
-  if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves the coil ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback risk.`]);
+  if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves it ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback to the compressor.`]);
   if (r.disSt.T > 250) A.push(['bad', `Discharge ${f0(r.disSt.T)}°F — oil breakdown territory (limit ~225–250°F at the line).`]);
   else if (r.disSt.T > 225) A.push(['warn', `Discharge ${f0(r.disSt.T)}°F — running hot.`]);
+  if (r.wet && r.ze >= 0) A.push(['warn', 'Wet suction gas reaching the compressor — discharge superheat is near zero.']);
   if (elecRes.comp.A > cfg.matched.RLA * 1.05) A.push(['warn', `Compressor at ${f1(elecRes.comp.A)} A, above RLA ${cfg.matched.RLA} A.`]);
-  if (!heat && !idW() && r.Te < 32) A.push(['warn', `Indoor coil saturation ${f1(r.Te)}°F — below freezing, the coil will ice.`]);
-  if (heat && !odW() && r.Te < 32 && r.wetCoil) A.push(['info', `Outdoor coil at ${f1(r.Te)}°F with moist air — frost is building. (Defrost cycles arrive in the next build.)`]);
-  { const es = r.ctx.evap.stream, ev = a.evap;
-    if (es.kind === 'water') {
-      const fp = es.fluid.fp, evType = heat ? cfg.outdoor.type : cfg.indoor.type;
-      if (ev.tout < fp + 4) A.push(['bad', `Leaving ${es.fluid.name.toLowerCase()} ${f1(ev.tout)}°F — within 4°F of its ${fp}°F freeze point. Freeze protection would trip.`]);
-      else if (r.Te < fp && evType === 'plate') A.push(['bad', `Plate surface at ${f1(r.Te)}°F, below the fluid's ${fp}°F freeze point — brazed plates can freeze and rupture.`]);
-      else if (r.Te < fp) A.push(['warn', `Refrigerant at ${f1(r.Te)}°F, below the fluid's ${fp}°F freeze point — ice can form on the tubes at low flow.`]);
-    } }
+  // air-side freezing / frost on the evaporator coil
+  if (!heat && !idW() && r.Te < 32) A.push(['warn', `Indoor coil saturation ${f1(r.Te)}°F — below 32°F, the coil will ${r.wetCoil ? 'ice up' : 'frost'}.`]);
+  if (heat && !odW() && r.Te < 32 && r.wetCoil) A.push(['info', `Outdoor coil saturation ${f1(r.Te)}°F with moist air — frost is building.`]);
+  // water / glycol loops, either side
+  for (const side of ['id', 'od']) {
+    const isW = side === 'id' ? idW() : odW(); if (!isW) continue;
+    const L = side === 'id' ? a.indoor : a.outdoor, fl = L.fluid, role = roleOf(side), nm = fl.name.toLowerCase();
+    const cut = side === 'id' ? sw.fzId : sw.fzOd, fzOn = sw.fzOn !== false;
+    if (L.tin < fl.fp) { A.push(['bad', `${role} entering ${nm} is ${f1(L.tin)}°F — ${f1(fl.fp - L.tin)}°F below its ${fl.fp}°F freeze point. That loop would be frozen solid.`]); continue; }
+    const d = L.tout - fl.fp;
+    if (d < 0) A.push(['bad', `${role} leaving ${nm} ${f1(L.tout)}°F — ${f1(-d)}°F below its ${fl.fp}°F freeze point. The ${role.toLowerCase()} would freeze${fzOn ? '' : ' (freeze protection is off)'}.`]);
+    else if (d < 4) A.push(['bad', `${role} leaving ${nm} ${f1(L.tout)}°F — only ${f1(d)}°F above its ${fl.fp}°F freeze point.`]);
+    const evType = side === 'id' ? cfg.indoor.type : cfg.outdoor.type;
+    if (role === 'Evaporator' && r.Te < fl.fp && d >= 0) A.push([evType === 'plate' ? 'bad' : 'warn', `Refrigerant at ${f1(r.Te)}°F, below the ${nm} freeze point (${fl.fp}°F)${evType === 'plate' ? ' — brazed plates can freeze and rupture' : ' — ice can form on the tube walls'}.`]);
+    if (fzOn && L.tout - cut < 3 && L.tout > cut) A.push(['warn', `${role} leaving ${nm} ${f1(L.tout)}°F — within ${f1(L.tout - cut)}°F of the ${cut}°F freeze cut-out.`]);
+    else if (fzOn && L.tout <= cut) A.push(['bad', `${role} leaving ${nm} ${f1(L.tout)}°F is at or below the ${cut}°F freeze cut-out — freeze protection will stop the compressor.`]);
+    if (!fzOn && d < 6) A.push(['warn', 'Freeze protection is bypassed.']);
+  }
   const cpt = r.ctx.idCfm / cfg.tons; if (!idW() && cpt < 325) A.push(['warn', `Indoor airflow ${f0(cpt)} cfm/ton — low.`]);
-  if (g(r.Pd) > sw.hpsOpen - 40 && !r.beyond) A.push(['warn', `Discharge within 40 psi of the high-pressure switch (${sw.hpsOpen} psig).`]);
+  if (g(r.Pd) > sw.hpsOpen - 40 && !r.beyond) A.push(['warn', `Discharge within ${f0(sw.hpsOpen - g(r.Pd))} psi of the high-pressure switch (${sw.hpsOpen} psig).`]);
+  if (g(r.Ps) < sw.lpsOpen + 10 && g(r.Ps) > sw.lpsOpen && !r.collapse) A.push(['warn', `Suction within ${f0(g(r.Ps) - sw.lpsOpen)} psi of the low-pressure switch (${sw.lpsOpen} psig).`]);
+  else if (g(r.Ps) <= sw.lpsOpen && !r.collapse) A.push(['bad', `Suction ${fmtP(r.Ps)} is below the ${sw.lpsOpen} psig low-pressure cut-out — the switch will open once the start bypass ends.`]);
   $('alerts').innerHTML = A.map(([k,t]) => `<div class="alert ${k==='bad'?'bad':k==='info'?'info':''}">${esc(t)}</div>`).join('');
 }
 
@@ -1244,7 +1280,7 @@ function renderChanges(what, prev, cur){
     const thr = {COP:.02, amps:.1, Q:150, kw:.02, m:4}[k] ?? 0.4;
     if (Math.abs(d) < thr) continue;
     const dv = k === 'COP' || k === 'kw' ? d.toFixed(2) : k === 'Q' || k === 'm' ? Math.round(d).toString() : d.toFixed(1);
-    const ll = k === 'supply' && idW() ? 'Leaving load water' : l;
+    const ll = k === 'supply' && idW() ? `${roleOf('id')} leaving water` : l;
     rows.push(`<li><span>${ll}</span><b class="${d>0?'up':'dn'}">${d>0?'+':''}${dv} ${u}</b></li>`);
   }
   el.innerHTML = `<h2>What changed</h2><div class="head">${esc(what)}</div>` + (rows.length ? `<ul>${rows.join('')}</ul>` : '<div class="note">No significant change at steady state.</div>');
@@ -1259,11 +1295,12 @@ $('toast').addEventListener('click', () => $('toast').classList.remove('show'));
 const CTL = [];  // {id, get, set, ...}
 function num(id, label, unit, min, max, step, get, set, opt = {}){
   CTL.push({id, type:'num', label, unit, min, max, step, get, set, ...opt});
-  return `<div class="row" id="w-${id}"><label for="${id}">${label}</label><div class="val"><button class="step" data-step="${id}" data-dir="-1" aria-label="decrease ${label}">−</button><input type="number" id="${id}" min="${min}" max="${max}" step="${step}"><em>${unit}</em><button class="step" data-step="${id}" data-dir="1" aria-label="increase ${label}">+</button></div><input type="range" id="${id}-r" min="${min}" max="${max}" step="${step}" aria-label="${label}"></div>`;
+  const L = LBL(label);
+  return `<div class="row" id="w-${id}"><label for="${id}">${L}</label><div class="val"><button class="step" data-step="${id}" data-dir="-1" aria-label="decrease ${L}">−</button><input type="number" id="${id}" min="${min}" max="${max}" step="${step}"><em>${unit}</em><button class="step" data-step="${id}" data-dir="1" aria-label="increase ${L}">+</button></div><input type="range" id="${id}-r" min="${min}" max="${max}" step="${step}" aria-label="${L}"></div>`;
 }
 function sel(id, label, opts, get, set, opt = {}){
   CTL.push({id, type:'sel', label, get, set, ...opt});
-  return `<div class="sel" id="w-${id}"><label for="${id}">${label}</label><select id="${id}">${opts.map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
+  return `<div class="sel" id="w-${id}"><label for="${id}">${LBL(label)}</label><select id="${id}">${opts.map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
 }
 function grp(title, body, open){ return `<details class="grp"${open?' open':''}><summary>${title}</summary><div class="grpb">${body}</div></details>`; }
 const meterOpts = [['txv','TXV'],['piston','Piston (fixed orifice)'],['eev','EEV']];
@@ -1273,14 +1310,14 @@ function buildControls(){
   h += grp('Test conditions', `<div id="presets"></div>` +
     num('idDB','Indoor dry bulb','°F',-30,130,1, () => cfg.cond.idDB, v => { cfg.cond.idDB = v; cfg.cond.idWB = Math.min(cfg.cond.idWB, v); }, {hide: () => idW()}) +
     num('idWB','Indoor wet bulb','°F',-30,130,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB), {hide: () => idW()}) +
-    num('idEwt','Load-side entering water','°F',-30,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
-    num('idGpm','Load-side flow','gpm',0.5,60,0.5, () => cfg.idWater.gpm, v => cfg.idWater.gpm = v, {hide: () => !idW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
-    sel('idFluid','Load-side fluid', FLUIDOPTS, () => cfg.idWater.fluid || 'water', v => cfg.idWater.fluid = v, {hide: () => !idW()}) +
+    num('idEwt',() => roleOf('id') + ' entering water','°F',-30,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
+    num('idGpm',() => roleOf('id') + ' water flow','gpm',0.5,60,0.5, () => cfg.idWater.gpm, v => cfg.idWater.gpm = v, {hide: () => !idW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
+    sel('idFluid',() => roleOf('id') + ' loop fluid', FLUIDOPTS, () => cfg.idWater.fluid || 'water', v => { if (cfg.sw.fzId === fzDefault(cfg.idWater.fluid)) cfg.sw.fzId = fzDefault(v); cfg.idWater.fluid = v; }, {hide: () => !idW()}) +
     num('odDB','Outdoor dry bulb','°F',-30,130,1, () => cfg.cond.odDB, v => { cfg.cond.odDB = v; cfg.cond.odWB = Math.min(cfg.cond.odWB, v); }, {hide: () => odW()}) +
     num('odWB','Outdoor wet bulb','°F',-30,130,1, () => cfg.cond.odWB, v => cfg.cond.odWB = Math.min(v, cfg.cond.odDB), {hide: () => odW()}) +
-    num('ewt','Source-side entering water','°F',-30,130,1, () => cfg.water.ewt, v => cfg.water.ewt = v, {hide: () => !odW()}) +
-    num('gpm','Source-side flow','gpm',0.5,60,0.5, () => cfg.water.gpm, v => cfg.water.gpm = v, {hide: () => !odW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
-    sel('odFluid','Source-side fluid', FLUIDOPTS, () => cfg.water.fluid || 'water', v => cfg.water.fluid = v, {hide: () => !odW()}), true);
+    num('ewt',() => roleOf('od') + ' entering water','°F',-30,130,1, () => cfg.water.ewt, v => cfg.water.ewt = v, {hide: () => !odW()}) +
+    num('gpm',() => roleOf('od') + ' water flow','gpm',0.5,60,0.5, () => cfg.water.gpm, v => cfg.water.gpm = v, {hide: () => !odW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
+    sel('odFluid',() => roleOf('od') + ' loop fluid', FLUIDOPTS, () => cfg.water.fluid || 'water', v => { if (cfg.sw.fzOd === fzDefault(cfg.water.fluid)) cfg.sw.fzOd = fzDefault(v); cfg.water.fluid = v; }, {hide: () => !odW()}), true);
   h += grp('Refrigerant & charge',
     sel('refr','Refrigerant', Object.keys(FL).map(k => [k,k]), () => cfg.refrigerant, v => { cfg.refrigerant = v; rematch(`Switched to ${v}: compressor, metering, switches and factory charge re-matched.`); }) +
     sel('tons','Nominal size', TONS.map(t => [t, t + ' ton']), () => cfg.tons, v => { cfg.tons = +v; rematch(`Resized to ${v} tons and re-matched.`); }) +
@@ -1324,6 +1361,10 @@ function buildControls(){
     num('lpsB','LPS bypass on start','s',0,300,5, () => cfg.sw.lpsBypass, v => cfg.sw.lpsBypass = v) +
     num('asc','Anti-short-cycle delay','s',0,600,15, () => cfg.sw.asc, v => cfg.sw.asc = v) +
     num('maxT','Trips before lockout','',1,6,1, () => cfg.sw.maxTrips, v => cfg.sw.maxTrips = v) +
+    sel('fzOn','Freeze protection', [['on','On'],['off','Off (bypassed)']], () => cfg.sw.fzOn === false ? 'off' : 'on', v => cfg.sw.fzOn = v === 'on', {hide: () => !idW() && !odW()}) +
+    num('fzId',() => roleOf('id') + ' freeze cut-out (leaving fluid)','°F',-30,50,1, () => cfg.sw.fzId, v => cfg.sw.fzId = v, {hide: () => !idW() || cfg.sw.fzOn === false}) +
+    num('fzOd',() => roleOf('od') + ' freeze cut-out (leaving fluid)','°F',-30,50,1, () => cfg.sw.fzOd, v => cfg.sw.fzOd = v, {hide: () => !odW() || cfg.sw.fzOn === false}) +
+    `<div class="note" id="fzNote"></div>` +
     `<button class="btn" id="swDefault">Restore default switch settings</button>`);
   h += grp('Electrical supply',
     num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v));
@@ -1345,15 +1386,15 @@ function buildControls(){
     const c = CTL.find(x => x.id === b.dataset.step); applyCtl(c, +(c.get()) + (+b.dataset.dir) * c.step);
   }));
   $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
-  $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); change('Switch settings restored to defaults'); });
+  $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); ensureFz(); change('Switch settings restored to defaults'); });
   $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
 function presetGroups(){
   const P = PRE[cfg.mode];
   return [
-    ['Indoor', idW() ? P.idWater : P.idAir, idW() ? 'idWater' : 'idAir'],
-    ['Outdoor', odW() ? P.odWater : P.odAir, odW() ? 'odWater' : 'odAir'],
+    [idW() ? roleOf('id') + ' water' : 'Indoor', idW() ? P.idWater : P.idAir, idW() ? 'idWater' : 'idAir'],
+    [odW() ? roleOf('od') + ' water' : 'Outdoor', odW() ? P.odWater : P.odAir, odW() ? 'odWater' : 'odAir'],
   ];
 }
 function presetOn(kind, p){
@@ -1367,7 +1408,7 @@ function renderPresets(){
   el.querySelectorAll('[data-pre]').forEach(b => b.addEventListener('click', () => {
     const [lbl, list, kind] = presetGroups()[+b.dataset.g], p = list[+b.dataset.pre];
     if (p.c) Object.assign(cfg.cond, p.c); else if (kind === 'idWater') cfg.idWater.ewt = p.w; else cfg.water.ewt = p.w;
-    change(`${lbl} condition: ${p.t}`);
+    change(`${lbl}: ${p.t}`);
   }));
 }
 function applyCtl(c, v){
@@ -1381,11 +1422,12 @@ function applyCtl(c, v){
   if (String(before) === String(c.get())) { syncControls(); return; }
   const unit = c.unit ? ' ' + c.unit : '';
   const show = x => typeof x === 'number' ? (+x.toFixed(c.dec ?? 2)).toString() : x;
-  change(`${c.label}: ${show(before)} → ${show(c.get())}${unit}`, c.id === 'refr' || c.id === 'tons');
+  change(`${LBL(c.label)}: ${show(before)} → ${show(c.get())}${unit}`, c.id === 'refr' || c.id === 'tons');
 }
 function syncControls(){
   for (const c of CTL) {
     const w = $('w-' + c.id); if (w) w.style.display = c.hide && c.hide() ? 'none' : '';
+    if (typeof c.label === 'function') { const lb = document.querySelector(`label[for="${c.id}"]`); if (lb) lb.textContent = c.label(); }
     const v = c.get();
     if (c.type === 'num') {
       const dec = c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : (c.step < 0.5 ? 2 : 1)) : 0);
@@ -1398,6 +1440,7 @@ function syncControls(){
   const llAdj = (cfg.lineLen - 25) * 0.6 / 16;
   $('chargeNote').innerHTML = `Factory charge ${m.charge} lb (for 25 ft). ` + (cfg.lineLen !== 25 ? `For ${cfg.lineLen} ft the installer would ${llAdj > 0 ? 'add' : 'remove'} about ${Math.abs(llAdj).toFixed(2)} lb (0.6 oz/ft of 3/8" liquid line). ` : '') +
     (cfg.chargeMode === 'sandbox' && res ? `<br>This target needs <b>${res.inv.toFixed(2)} lb</b> in the system right now.` : `Charge is now ${(cfg.charge - m.charge >= 0 ? '+' : '')}${(cfg.charge - m.charge).toFixed(2)} lb vs factory.`);
+  const fn = $('fzNote'); if (fn) fn.textContent = (idW() || odW()) ? `Freeze protection stops the compressor when a water loop's leaving fluid falls to the cut-out, and resets 10°F above it. Typical cut-out: 38°F for water, about 8°F above the freeze point for glycol (${E.WFLUID[cfg.water.fluid||'water'].name}: ${fzDefault(cfg.water.fluid)}°F).` : '';
   const an = $('airNote'); if (an) an.textContent = idW() && odW() ? 'No air side on this unit — both heat exchangers are water-to-refrigerant.' : idW() ? 'Indoor side is a water loop, so there is no blower. Outdoor fan airflow still applies.' : 'PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.';
   renderPresets();
   const PG = presetGroups();
@@ -1417,7 +1460,7 @@ function renderReadings(){
   h += '</table></div>';
   const airRow = (lbl, A) => A.kind === 'air'
     ? `<tr><td>${lbl} in</td><td class="n">${f1(A.in.db)}</td><td class="n">${f1(A.in.wb)}</td><td class="n">${f0(A.in.rh)}%</td><td class="n">${f1(A.in.dp)}</td><td class="n">${f1(A.in.gr)}</td><td class="n">${A.in.h.toFixed(2)}</td></tr><tr><td>${lbl} out</td><td class="n">${on?f1(A.out.db):'—'}</td><td class="n">${on?f1(A.out.wb):'—'}</td><td class="n">${on?f0(A.out.rh)+'%':'—'}</td><td class="n">${on?f1(A.out.dp):'—'}</td><td class="n">${on?f1(A.out.gr):'—'}</td><td class="n">${on?A.out.h.toFixed(2):'—'}</td></tr>`
-    : `<tr><td>${lbl} ${A.fluid.name.toLowerCase()} in / out</td><td class="n" colspan="6" style="text-align:left;white-space:normal">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
+    : `<tr><td>${roleOf(lbl === 'Indoor' ? 'id' : 'od')} ${A.fluid.name.toLowerCase()} in / out</td><td class="n" colspan="6" style="text-align:left;white-space:normal">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
   h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h, Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
   const Qref = heat ? a.Qc : a.Qe;
   const IA = a.indoor, st = heat ? r.ctx.cond.stream : r.ctx.evap.stream;
@@ -1429,7 +1472,7 @@ function renderReadings(){
     ['Enthalpy in', IA.in.h.toFixed(2) + ' Btu/lb'], ['Enthalpy out', on ? IA.out.h.toFixed(2) + ' Btu/lb' : '—'],
     ['Δh', on ? Math.abs(IA.out.h - IA.in.h).toFixed(2) + ' Btu/lb' : '—'],
     ['Capacity', on ? f0(airQ) + ' Btu/h' : '—'],
-  ]) : '<h2 style="margin-top:14px">Load-side water method</h2>' + kv([
+  ]) : `<h2 style="margin-top:14px">${roleOf('id')} water method</h2>` + kv([
     ['Fluid', IA.fluid.name], ['Flow', IA.gpm + ' gpm'],
     ['Entering', f1(IA.tin) + '°F'], ['Leaving', on ? f1(IA.tout) + '°F' : '—'], ['ΔT', on ? f1(Math.abs(IA.tout - IA.tin)) + '°F' : '—'],
     ['Capacity', on ? f0(airQ) + ' Btu/h' : '—'],
@@ -1462,7 +1505,7 @@ function renderElec(){
     !odW() && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
   ]);
   h += `<h2 style="margin-top:12px">Indoor unit</h2>` + kv([
-    ...(idW() ? [['Blower', 'none — water load loop']] : [['Blower', bOn ? f1(e.blower.A) + ' A · ' + f0(e.blower.W) + ' W' : '0.0 A'], ['Airflow', f0(res.ctx.idCfm) + ' cfm'], ['External static', cfg.blower.esp.toFixed(2) + ' in.']]),
+    ...(idW() ? [['Blower', 'none — water loop']] : [['Blower', bOn ? f1(e.blower.A) + ' A · ' + f0(e.blower.W) + ' W' : '0.0 A'], ['Airflow', f0(res.ctx.idCfm) + ' cfm'], ['External static', cfg.blower.esp.toFixed(2) + ' in.']]),
   ]);
   h += `<h2 style="margin-top:12px">System</h2>` + kv([['Total power', on ? f0(e.totalW) + ' W' : f0(bOn ? e.blower.W : 0) + ' W'], ['COP', on ? (disp.COP).toFixed(2) : '—'], ['EER (Btu/Wh)', on ? (disp.COP * 3.412).toFixed(1) : '—']]);
   $('tab-elec').innerHTML = h;
@@ -1554,6 +1597,7 @@ document.body.dataset.view = 'system';
 if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
 if (cfg.sw && cfg.sw.asc === 300) cfg.sw.asc = 30;   // older saved default
 if (!cfg.water.fluid) cfg.water.fluid = 'water';
+ensureFz();
 for (const m of ['cool','heat']) if (cfg.savedCond[m].idEwt == null) cfg.savedCond[m].idEwt = m === 'cool' ? 54 : 104;
 $('mCool').classList.toggle('on', cfg.mode === 'cool'); $('mHeat').classList.toggle('on', cfg.mode === 'heat');
 buildTiles(); buildSchem();
@@ -1565,9 +1609,10 @@ renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
   const now = performance.now(), dt = Math.min(1, (now - lastT) / 1000); lastT = now;
-  const wasComp = S.comp;
+  const sig = () => [S.comp, S.trip, S.lock, S.tripWhy, S.trips].join('|');
+  const before = sig();
   tick(dt);
-  if (wasComp !== S.comp) renderAll();
+  if (before !== sig()) renderAll();
   if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); }
 }, 250);
 })();
