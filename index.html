@@ -1072,7 +1072,7 @@ function renderProbe(){
     if (id === 'comp') {
       const c = e.comp;
       h = `<h3>Compressor · ${c.type === 'inv' ? 'inverter scroll' : c.type === 'two' ? 'two-stage scroll' : 'single-speed scroll'}</h3>` + kv([
-        ['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A'], c.type !== 'inv' && ['Run (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && ['Start (S) amps', on ? f1(c.S) + ' A' : '0 A'],
+        ['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A'], c.type !== 'inv' && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
         ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`],
         c.type === 'inv' && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
         ['Suction', fmtP(disp.Ps)], ['Discharge', fmtP(disp.Pd)], ['Compression ratio', on ? (r.PR).toFixed(2) : '—'],
@@ -1335,7 +1335,7 @@ function renderElec(){
   const e = elecRes, on = S.comp, c = e.comp, bOn = S.call && cfg.blowerOn;
   let h = `<h2>Outdoor unit</h2>` + kv([
     ['Line voltage L1–L2', f0(e.V) + ' V'], ['Unit total', on ? f1(e.odUnitA) + ' A' : '0.0 A'],
-    ['Compressor C', on ? f1(c.A) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor R', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor S', on ? f1(c.S) + ' A' : '0.0 A'],
+    ['Compressor common (C)', on ? f1(c.A) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor run winding (R)', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor start winding (S)', on ? f1(c.S) + ' A' : '0.0 A'],
     ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], c.type === 'inv' && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
     cfg.outdoor.type !== 'water' && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
   ]);
