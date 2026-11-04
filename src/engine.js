@@ -123,11 +123,12 @@ function buildCtx(cfg, FL) {
   if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
   else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
   idCfm *= cfg.faults?.idAirflow ?? 1;
-  const odCfmNom = (odC.cfmOd || 900) * tons, odCfm = odCfmNom * cfg.odFan.pct / 100 * (cfg.faults?.odAirflow ?? 1);
+  idCfm = Math.max(idCfm, 0.04 * idC.cfmId * tons);          // leakage/natural draft floor
+  const odCfmNom = (odC.cfmOd || 900) * tons, odCfm = Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (cfg.faults?.odAirflow ?? 1));
   const idAir = heat ? { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) } : { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) };
   const odAir = { db: cfg.cond.odDB, W: Psy.W_DBWB(cfg.cond.odDB, Math.min(cfg.cond.odWB, cfg.cond.odDB)) };
   const air = (a, cfm) => { const v = Psy.v(a.db, a.W), ma = cfm * 60 / v; return { kind: 'air', T: a.db, W: a.W, h: Psy.h(a.db, a.W), ma, C: ma * (0.240 + 0.444 * a.W), cfm }; };
-  const gpmNom = 3 * tons, gpm = cfg.water.gpm;
+  const gpmNom = 3 * tons, gpm = Math.max(0.1 * tons, cfg.water.gpm);
   const wtr = { kind: 'water', T: cfg.water.ewt, C: gpm * 500, gpm, ma: gpm * 500 };
   const idStream = air(idAir, idCfm), odStream = water ? wtr : air(odAir, odCfm);
   // coil UA
@@ -144,7 +145,7 @@ function buildCtx(cfg, FL) {
     cond: heat ? { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpC * 0.8, name: 'indoor' } : { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpC, name: 'outdoor' },
     idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom,
     Vll: area(ids.liq) * L, Vvl: area(ids.vap) * L,
-    Vcomp: cfg.matched.Vcomp || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
+    Vcomp: cfg.matched.Vcomp || 0, VcompH: cfg.matched.VcompH || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
     mNom: cfg.matched.mNom, rhoSucNom: cfg.matched.rhoSucNom,
     disp: cfg.matched.disp,
   };
@@ -284,7 +285,7 @@ function cycle(ctx, x, detail) {
   const mLL = ctx.Vll * upSt.rho;
   const mVL = ctx.Vvl * (ctx.heat ? disSt.rho : F.state(PeOut, hEo).rho);
   const accLiq = we < 0 ? ctx.Vacc * F.rhoBub(Ps) * clamp(-we / 15, 0, 0.85) : 0;
-  const mComp = ctx.Vcomp * (ctx.heat ? rhoS : F.rhoLiqT(Tliq));
+  const mComp = ctx.Vcomp * (ctx.heat ? rhoS : F.rhoLiqT(Tliq)) + ctx.VcompH * (ctx.heat ? F.rhoLiqT(Tliq) : rhoS);
   const mShell = ctx.Vshell * rhoS + ctx.Vdl * disSt.rho + ctx.Vacc * rhoS + ctx.oil + accLiq + mComp;
   const inv = mCond + mEvap + mLL + mVL + mShell;
   if (mode === 'sandbox') r4 = (SCv - cfg.scTarget) / 10;
@@ -343,7 +344,7 @@ function newton(ctx, x0, bounds) {
 function solveCtx(ctx, guess) {
   const F = ctx.F;
   const Tei = ctx.evap.stream.T, Tci = ctx.cond.stream.T;
-  const bounds = [[F.Tmin + 3, Tei - 0.3], [Tci + 0.3, F.Tmax - 1.5], [-60, 98], [-50, 98]];
+  const bounds = [[F.Tmin + 3, Tei - 0.3], [Tci + 0.3, F.Tmax - 1.5], [-94, 98], [-50, 98]];
   const starts = [];
   if (guess) starts.push(guess);
   starts.push([Tei - 30, Tci + 22, 12, 6], [Tei - 45, Tci + 15, 3, 30], [Tei - 20, Tci + 35, 35, 3], [Tei - 60, Tci + 10, -5, 60], [Tei - 12, Tci + 45, 60, -5], [Tei - 25, Tci + 25, 20, -10]);
@@ -438,12 +439,15 @@ function match(cfg, FL) {
   // heating charge requirement (sandbox SC 8 at H1)
   const h = JSON.parse(JSON.stringify(c));
   h.mode = 'heat'; h.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; h.water.ewt = 68; h.shTarget = 8; h.scTarget = 8;
-  m.Vcomp = 0;
+  m.Vcomp = 0; m.VcompH = 0;
   const hs = solve(h, FL, null);
   const coolReq = s.inv, heatReq = hs.inv;
-  // charge compensator stores liquid in cooling when heating needs more charge
+  // charge compensator: stores liquid in whichever mode needs less charge.
+  // Heating keeps up to 15% surplus (normal extra subcooling in heat).
   m.Vcomp = Math.max(0, heatReq - coolReq) / F.rhoLiqT(s.Tliq);
-  m.charge = Math.round(Math.max(coolReq, heatReq) * 10) / 10;
+  const surplus = Math.max(0, coolReq - 1.15 * heatReq);
+  m.VcompH = surplus / (F.rhoLiqT(hs.Tliq) - F.state(hs.Ps, hs.h1).rho);
+  m.charge = Math.round(Math.max(coolReq + m.VcompH * F.state(s.Ps, s.h1).rho, heatReq) * 10) / 10;
   m.coolReq = coolReq; m.heatReq = heatReq;
   c.chargeMode = 'size'; c.charge = m.charge; c.shTarget = 10;
   s = solve(c, FL, s.x);

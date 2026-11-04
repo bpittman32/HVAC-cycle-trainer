@@ -368,11 +368,12 @@ function buildCtx(cfg, FL) {
   if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
   else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
   idCfm *= cfg.faults?.idAirflow ?? 1;
-  const odCfmNom = (odC.cfmOd || 900) * tons, odCfm = odCfmNom * cfg.odFan.pct / 100 * (cfg.faults?.odAirflow ?? 1);
+  idCfm = Math.max(idCfm, 0.04 * idC.cfmId * tons);          // leakage/natural draft floor
+  const odCfmNom = (odC.cfmOd || 900) * tons, odCfm = Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (cfg.faults?.odAirflow ?? 1));
   const idAir = heat ? { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) } : { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) };
   const odAir = { db: cfg.cond.odDB, W: Psy.W_DBWB(cfg.cond.odDB, Math.min(cfg.cond.odWB, cfg.cond.odDB)) };
   const air = (a, cfm) => { const v = Psy.v(a.db, a.W), ma = cfm * 60 / v; return { kind: 'air', T: a.db, W: a.W, h: Psy.h(a.db, a.W), ma, C: ma * (0.240 + 0.444 * a.W), cfm }; };
-  const gpmNom = 3 * tons, gpm = cfg.water.gpm;
+  const gpmNom = 3 * tons, gpm = Math.max(0.1 * tons, cfg.water.gpm);
   const wtr = { kind: 'water', T: cfg.water.ewt, C: gpm * 500, gpm, ma: gpm * 500 };
   const idStream = air(idAir, idCfm), odStream = water ? wtr : air(odAir, odCfm);
   // coil UA
@@ -389,7 +390,7 @@ function buildCtx(cfg, FL) {
     cond: heat ? { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpC * 0.8, name: 'indoor' } : { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpC, name: 'outdoor' },
     idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom,
     Vll: area(ids.liq) * L, Vvl: area(ids.vap) * L,
-    Vcomp: cfg.matched.Vcomp || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
+    Vcomp: cfg.matched.Vcomp || 0, VcompH: cfg.matched.VcompH || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
     mNom: cfg.matched.mNom, rhoSucNom: cfg.matched.rhoSucNom,
     disp: cfg.matched.disp,
   };
@@ -529,7 +530,7 @@ function cycle(ctx, x, detail) {
   const mLL = ctx.Vll * upSt.rho;
   const mVL = ctx.Vvl * (ctx.heat ? disSt.rho : F.state(PeOut, hEo).rho);
   const accLiq = we < 0 ? ctx.Vacc * F.rhoBub(Ps) * clamp(-we / 15, 0, 0.85) : 0;
-  const mComp = ctx.Vcomp * (ctx.heat ? rhoS : F.rhoLiqT(Tliq));
+  const mComp = ctx.Vcomp * (ctx.heat ? rhoS : F.rhoLiqT(Tliq)) + ctx.VcompH * (ctx.heat ? F.rhoLiqT(Tliq) : rhoS);
   const mShell = ctx.Vshell * rhoS + ctx.Vdl * disSt.rho + ctx.Vacc * rhoS + ctx.oil + accLiq + mComp;
   const inv = mCond + mEvap + mLL + mVL + mShell;
   if (mode === 'sandbox') r4 = (SCv - cfg.scTarget) / 10;
@@ -588,7 +589,7 @@ function newton(ctx, x0, bounds) {
 function solveCtx(ctx, guess) {
   const F = ctx.F;
   const Tei = ctx.evap.stream.T, Tci = ctx.cond.stream.T;
-  const bounds = [[F.Tmin + 3, Tei - 0.3], [Tci + 0.3, F.Tmax - 1.5], [-60, 98], [-50, 98]];
+  const bounds = [[F.Tmin + 3, Tei - 0.3], [Tci + 0.3, F.Tmax - 1.5], [-94, 98], [-50, 98]];
   const starts = [];
   if (guess) starts.push(guess);
   starts.push([Tei - 30, Tci + 22, 12, 6], [Tei - 45, Tci + 15, 3, 30], [Tei - 20, Tci + 35, 35, 3], [Tei - 60, Tci + 10, -5, 60], [Tei - 12, Tci + 45, 60, -5], [Tei - 25, Tci + 25, 20, -10]);
@@ -683,12 +684,15 @@ function match(cfg, FL) {
   // heating charge requirement (sandbox SC 8 at H1)
   const h = JSON.parse(JSON.stringify(c));
   h.mode = 'heat'; h.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; h.water.ewt = 68; h.shTarget = 8; h.scTarget = 8;
-  m.Vcomp = 0;
+  m.Vcomp = 0; m.VcompH = 0;
   const hs = solve(h, FL, null);
   const coolReq = s.inv, heatReq = hs.inv;
-  // charge compensator stores liquid in cooling when heating needs more charge
+  // charge compensator: stores liquid in whichever mode needs less charge.
+  // Heating keeps up to 15% surplus (normal extra subcooling in heat).
   m.Vcomp = Math.max(0, heatReq - coolReq) / F.rhoLiqT(s.Tliq);
-  m.charge = Math.round(Math.max(coolReq, heatReq) * 10) / 10;
+  const surplus = Math.max(0, coolReq - 1.15 * heatReq);
+  m.VcompH = surplus / (F.rhoLiqT(hs.Tliq) - F.state(hs.Ps, hs.h1).rho);
+  m.charge = Math.round(Math.max(coolReq + m.VcompH * F.state(s.Ps, s.h1).rho, heatReq) * 10) / 10;
   m.coolReq = coolReq; m.heatReq = heatReq;
   c.chargeMode = 'size'; c.charge = m.charge; c.shTarget = 10;
   s = solve(c, FL, s.x);
@@ -776,6 +780,7 @@ function solveNow(){
   res = r;
   const F_ = F();
   res.beyond = !r.converged && r.Tc > F_.Tmax - 3;
+  res.collapse = !r.converged && !res.beyond && (g(r.Ps) < (cfg.sw ? cfg.sw.lpsOpen : 30) + 20 || r.Te < F_.Tmin + 10);
   res.air = airSide(r);
   res.points = points(r);
   VM = buildVM(r);
@@ -826,10 +831,10 @@ function buildVM(r){
   const lowP = heat ? r.Ps : pts[7].P;              // low-side gauge port
   const highP = heat ? pts[7].P : pts[3].P;         // high-side gauge port
   const Tsuc = heat ? pts[8].T : pts[7].T;
-  const Tliq = heat ? pts[4].T : pts[3].T;
+  const Tliq = pts[3].T, Pliq = pts[3].P;            // liquid line service valve, both modes
   const v = {
     lowP, highP, Tsuc, Tliq, Tdis: r.disSt.T, Pd: r.Pd, Ps: r.Ps,
-    SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(highP) - Tliq,
+    SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(Pliq) - Tliq,
     SHevap: r.ze, amps: e.comp.A, Q: heat ? a.Qc : a.Qe, kw: e.totalW / 1000,
     COP: (heat ? a.Qc : a.Qe) / (e.totalW * 3.412), m: r.m,
     supply: a.indoor.kind === 'air' ? a.indoor.out.db : NaN,
@@ -872,6 +877,7 @@ function tick(dtReal){
   }
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
   if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
+  if (S.comp && res.collapse) { tgt.Ps = Math.max(F().Pmin, PATM + sw.lpsOpen - 10); tgt.lowP = tgt.Ps + 1; tgt.P9 = tgt.Ps; }
   for (const k in tgt) {
     const a = tgt[k], b = disp[k];
     if (!isFinite(a)) { disp[k] = a; continue; }
@@ -1003,8 +1009,8 @@ function markSel(){
   const el = document.querySelector('#schem ' + q); if (el) el.classList.add('sel');
 }
 function zones(gid, x, y, w, h, list, fromRight){
-  const tot = list.reduce((a,b) => a + Math.max(0,b[0]), 0) || 1; let pos = 0, out = '';
-  for (const [f, col] of list) { const ww = w * Math.max(0,f) / tot; const xx = fromRight ? x + w - pos - ww : x + pos; out += `<rect x="${xx.toFixed(1)}" y="${y}" width="${ww.toFixed(1)}" height="${h}" fill="${col}" opacity=".75"/>`; pos += ww; }
+  const tot = list.reduce((a,b) => a + (isFinite(b[0]) ? Math.max(0,b[0]) : 0), 0) || 1; let pos = 0, out = '';
+  for (const [f, col] of list) { const ww = isFinite(f) && isFinite(tot) ? w * Math.max(0,f) / tot : 0; const xx = fromRight ? x + w - pos - ww : x + pos; out += `<rect x="${xx.toFixed(1)}" y="${y}" width="${ww.toFixed(1)}" height="${h}" fill="${col}" opacity=".75"/>`; pos += ww; }
   $(gid).innerHTML = out;
 }
 function renderSchemStatic(){
@@ -1141,6 +1147,7 @@ function renderAlerts(){
   const r = res, A = [], heat = cfg.mode === 'heat', sw = cfg.sw, a = r.air;
   if (!S.comp) { $('alerts').innerHTML = ''; return; }
   if (r.beyond) A.push(['bad', 'Head pressure would climb past the model range — the high-pressure switch will open.']);
+  else if (r.collapse) A.push(['bad', 'The evaporator is starved — suction pressure will fall until the low-pressure switch opens.']);
   else if (!r.converged) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves the coil ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback risk.`]);
@@ -1265,7 +1272,7 @@ function buildControls(){
   }));
   $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
   $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); change('Switch settings restored to defaults'); });
-  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; change('Factory defaults restored', true); });
+  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
 function renderPresets(){

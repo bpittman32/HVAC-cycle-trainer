@@ -313,6 +313,7 @@ function solveNow(){
   res = r;
   const F_ = F();
   res.beyond = !r.converged && r.Tc > F_.Tmax - 3;
+  res.collapse = !r.converged && !res.beyond && (g(r.Ps) < (cfg.sw ? cfg.sw.lpsOpen : 30) + 20 || r.Te < F_.Tmin + 10);
   res.air = airSide(r);
   res.points = points(r);
   VM = buildVM(r);
@@ -363,10 +364,10 @@ function buildVM(r){
   const lowP = heat ? r.Ps : pts[7].P;              // low-side gauge port
   const highP = heat ? pts[7].P : pts[3].P;         // high-side gauge port
   const Tsuc = heat ? pts[8].T : pts[7].T;
-  const Tliq = heat ? pts[4].T : pts[3].T;
+  const Tliq = pts[3].T, Pliq = pts[3].P;            // liquid line service valve, both modes
   const v = {
     lowP, highP, Tsuc, Tliq, Tdis: r.disSt.T, Pd: r.Pd, Ps: r.Ps,
-    SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(highP) - Tliq,
+    SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(Pliq) - Tliq,
     SHevap: r.ze, amps: e.comp.A, Q: heat ? a.Qc : a.Qe, kw: e.totalW / 1000,
     COP: (heat ? a.Qc : a.Qe) / (e.totalW * 3.412), m: r.m,
     supply: a.indoor.kind === 'air' ? a.indoor.out.db : NaN,
@@ -409,6 +410,7 @@ function tick(dtReal){
   }
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
   if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
+  if (S.comp && res.collapse) { tgt.Ps = Math.max(F().Pmin, PATM + sw.lpsOpen - 10); tgt.lowP = tgt.Ps + 1; tgt.P9 = tgt.Ps; }
   for (const k in tgt) {
     const a = tgt[k], b = disp[k];
     if (!isFinite(a)) { disp[k] = a; continue; }
@@ -540,8 +542,8 @@ function markSel(){
   const el = document.querySelector('#schem ' + q); if (el) el.classList.add('sel');
 }
 function zones(gid, x, y, w, h, list, fromRight){
-  const tot = list.reduce((a,b) => a + Math.max(0,b[0]), 0) || 1; let pos = 0, out = '';
-  for (const [f, col] of list) { const ww = w * Math.max(0,f) / tot; const xx = fromRight ? x + w - pos - ww : x + pos; out += `<rect x="${xx.toFixed(1)}" y="${y}" width="${ww.toFixed(1)}" height="${h}" fill="${col}" opacity=".75"/>`; pos += ww; }
+  const tot = list.reduce((a,b) => a + (isFinite(b[0]) ? Math.max(0,b[0]) : 0), 0) || 1; let pos = 0, out = '';
+  for (const [f, col] of list) { const ww = isFinite(f) && isFinite(tot) ? w * Math.max(0,f) / tot : 0; const xx = fromRight ? x + w - pos - ww : x + pos; out += `<rect x="${xx.toFixed(1)}" y="${y}" width="${ww.toFixed(1)}" height="${h}" fill="${col}" opacity=".75"/>`; pos += ww; }
   $(gid).innerHTML = out;
 }
 function renderSchemStatic(){
@@ -678,6 +680,7 @@ function renderAlerts(){
   const r = res, A = [], heat = cfg.mode === 'heat', sw = cfg.sw, a = r.air;
   if (!S.comp) { $('alerts').innerHTML = ''; return; }
   if (r.beyond) A.push(['bad', 'Head pressure would climb past the model range — the high-pressure switch will open.']);
+  else if (r.collapse) A.push(['bad', 'The evaporator is starved — suction pressure will fall until the low-pressure switch opens.']);
   else if (!r.converged) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves the coil ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback risk.`]);
@@ -802,7 +805,7 @@ function buildControls(){
   }));
   $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
   $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); change('Switch settings restored to defaults'); });
-  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; change('Factory defaults restored', true); });
+  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
 function renderPresets(){
