@@ -428,8 +428,26 @@ function renderTiles(){
     el.children[1].innerHTML = `${esc(v)}<u>${esc(u)}</u>`;
     el.children[2].textContent = t.s(disp);
   }
-  const unsettled = S.comp && ['lowP','highP','Tdis','SH'].some(k => isFinite(VM[k]) && Math.abs(disp[k] - VM[k]) > (k.endsWith('P') ? 2 : 1));
-  const st = $('settle'); st.textContent = unsettled ? 'Settling — readings are still moving. Wait for stable conditions before recording.' : S.comp ? 'Stable — readings are steady.' : 'Compressor off.';
+  // stable = every key reading has held within tolerance for the last minute of simulated time
+  const STAB = [['lowP','Low side',2,'psi'],['highP','High side',2,'psi'],['SH','Superheat',1,'°F'],['SC','Subcooling',1,'°F'],['Tdis','Discharge temp',2,'°F'],['amps','Compressor amps',0.2,'A']];
+  let worst = null;
+  if (S.comp) {
+    const n = HIST.t.length, tNow = S.t;
+    if (S.tRun < 60 || n < 2 || HIST.t[0] > tNow - 60) worst = {label: 'Unit just started', d: null};
+    else {
+      let i0 = n - 1; while (i0 > 0 && HIST.t[i0 - 1] >= tNow - 60) i0--;
+      for (const [k, lbl, tol, u] of STAB) {
+        const a = HIST.v[k] || []; let lo = Infinity, hi = -Infinity;
+        for (let i = i0; i < n; i++) if (isFinite(a[i])) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
+        if (isFinite(lo) && hi - lo > tol && (!worst || (hi - lo) / tol > worst.r)) worst = {label: lbl, d: hi - lo, u, r: (hi - lo) / tol, tol};
+      }
+    }
+  }
+  const unsettled = !!worst;
+  const st = $('settle');
+  st.textContent = !S.comp ? 'Compressor off.' : !unsettled ? 'Stable — readings held steady for the last minute.'
+    : worst.d == null ? 'Settling — the unit just started. Wait at least a minute of steady readings before recording.'
+    : `Settling — ${worst.label.toLowerCase()} moved ${worst.d.toFixed(1)} ${worst.u} in the last minute (stable is under ${worst.tol} ${worst.u}). Wait before recording.`;
   st.className = 'settle ' + (unsettled ? 'moving' : S.comp ? 'steady' : '');
 }
 let flashTimer = null;
@@ -1160,7 +1178,7 @@ solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
 logEvent('Simulator v/*VERSION*/ started at steady state.');
-histRecord(S.t, disp, true);
+for (let t = -60; t <= 0; t++) histRecord(t, disp, true);   // the simulator opens at steady state
 setupTrendsTab();
 renderAll();
 let lastT = performance.now(), slow = 0;
