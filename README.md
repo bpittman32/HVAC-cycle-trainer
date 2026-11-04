@@ -13,6 +13,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - Refrigerants: R-410A, R-454B, R-32, R-407C (large glide), R-404A
 - Charge in pounds, tracked by refrigerant mass in every coil and line; sandbox mode sets superheat/subcooling targets directly
 - TXV, piston or EEV on each coil
+- Refrigerant weights in lb and oz (charge control steps 1 oz; type 7 lb 4 oz, 7 4, 7.25 or 116 oz)
 - Floodback: sandbox superheat target down to −15°F (below zero sets how much liquid returns), shown as % liquid back, discharge superheat and a mixture-colored suction line
 - Compressor types: scroll (single-speed, two-stage, inverter), digital scroll (15-second pulse unloading), reciprocating, rotary (fixed or inverter) and screw with slide valve (three-phase). Each has its own volumetric and isentropic efficiency curves, shell heat loss and phase-rotation behavior
 - Indoor and outdoor heat exchangers: tube-and-fin or microchannel (air), coaxial, shell-and-tube or brazed plate (water). Any combination works: air-to-air, water-source, air-to-water, water-to-water. The schematic redraws to match.

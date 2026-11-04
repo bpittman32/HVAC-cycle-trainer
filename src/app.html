@@ -95,6 +95,7 @@ details.grp[open]>summary::after{content:"–"}
 .row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center}
 .row label{font-size:14px}
 .row .val{display:flex;align-items:center;gap:4px}
+.row .val input.wide{width:104px;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-family:var(--f-num);text-align:right}
 .row .val input[type=number]{width:74px;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-family:var(--f-num);text-align:right}
 .row .val em{font-style:normal;color:var(--muted);font-size:12px;min-width:30px}
 .row input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--accent);height:26px}
@@ -705,7 +706,7 @@ function renderProbe(){
         role === 'evap' && A.kind === 'air' && ['Coil surface', r.wetCoil ? 'wet' : 'dry'],
         role === 'evap' && A.kind === 'air' && ['Moisture removed', on ? f1(Math.max(0,(A.in.W - A.out.W))*7000) + ' gr/lb' : '—'],
         ['Refrigerant ΔP', on ? f1(role === 'cond' ? r.PcIn - r.Pco : r.PeIn - r.PeOut) + ' psi' : '—'],
-        ['Charge held', on ? (role === 'cond' ? r.mParts.cond : r.mParts.evap).toFixed(2) + ' lb' : '—'],
+        ['Charge held', on ? lbOz(role === 'cond' ? r.mParts.cond : r.mParts.evap) : '—'],
       ]) + (on ? `<p class="hint">Coil length used for ${zonesTxt}.</p><p class="hint">Heat moved = ${A.kind === 'air' ? 'air flow × air Δh' : 'water flow × water ΔT'} = refrigerant flow × refrigerant Δh. Air enthalpy is per lb of dry air.</p>` : '');
     } else if (id === 'idmeter' || id === 'odmeter') {
       const isId = id === 'idmeter', M = isId ? cfg.indoor : cfg.outdoor, active = isId !== heat;
@@ -809,10 +810,19 @@ function renderChanges(what, prev, cur){
 
 /* ---------- controls ---------- */
 const CTL = [];  // {id, get, set, ...}
+/* refrigerant weight in pounds and ounces */
+function lbOz(lb, signed){ const neg = lb < 0, oz = Math.round(Math.abs(lb) * 16), L = Math.floor(oz / 16), O = oz % 16;
+  const t = L && O ? `${L} lb ${O} oz` : L ? `${L} lb` : `${O} oz`; return (neg && oz ? '−' : signed ? '+' : '') + t; }
+function parseLbOz(str){ const t = String(str).toLowerCase().replace(/,/g, '.').trim();
+  const lbm = t.match(/([\d.]+)\s*(lbs?|#|pounds?)/), ozm = t.match(/([\d.]+)\s*(oz|ounces?)/);
+  if (lbm || ozm) return (lbm ? +lbm[1] : 0) + (ozm ? +ozm[1] / 16 : 0);
+  const n = t.split(/[\s\-:]+/).filter(Boolean).map(Number);
+  if (n.length === 2) return n[0] + n[1] / 16;          // "7 4" or "7-4" = 7 lb 4 oz
+  return n.length === 1 ? n[0] : NaN; }                  // plain number = pounds
 function num(id, label, unit, min, max, step, get, set, opt = {}){
   CTL.push({id, type:'num', label, unit, min, max, step, get, set, ...opt});
   const L = LBL(label);
-  return `<div class="row" id="w-${id}"><label for="${id}">${L}</label><div class="val"><button class="step" data-step="${id}" data-dir="-1" aria-label="decrease ${L}">−</button><input type="number" id="${id}" min="${min}" max="${max}" step="${step}"><em>${unit}</em><button class="step" data-step="${id}" data-dir="1" aria-label="increase ${L}">+</button></div><input type="range" id="${id}-r" min="${min}" max="${max}" step="${step}" aria-label="${L}"></div>`;
+  return `<div class="row" id="w-${id}"><label for="${id}">${L}</label><div class="val"><button class="step" data-step="${id}" data-dir="-1" aria-label="decrease ${L}">−</button>${opt.fmt ? `<input type="text" class="wide" id="${id}" autocomplete="off">` : `<input type="number" id="${id}" min="${min}" max="${max}" step="${step}">`}<em>${unit}</em><button class="step" data-step="${id}" data-dir="1" aria-label="increase ${L}">+</button></div><input type="range" id="${id}-r" min="${min}" max="${max}" step="${step}" aria-label="${L}"></div>`;
 }
 function sel(id, label, opts, get, set, opt = {}){
   CTL.push({id, type:'sel', label, get, set, ...opt});
@@ -838,7 +848,7 @@ function buildControls(){
     sel('refr','Refrigerant', Object.keys(FL).map(k => [k,k]), () => cfg.refrigerant, v => { cfg.refrigerant = v; rematch(`Switched to ${v}: compressor, metering, switches and factory charge re-matched.`); }) +
     sel('tons','Nominal size', TONS.map(t => [t, t + ' ton']), () => cfg.tons, v => { cfg.tons = +v; rematch(`Resized to ${v} tons and re-matched.`); }) +
     sel('cmode','Charging mode', [['realistic','Realistic — set charge & metering'],['sandbox','Sandbox — set SH/SC targets']], () => cfg.chargeMode, v => cfg.chargeMode = v) +
-    num('charge','Refrigerant charge','lb',1,40,0.25, () => cfg.charge, v => cfg.charge = v, {hide: () => cfg.chargeMode !== 'realistic', minmax: () => [Math.max(0.5, cfg.matched.charge*0.3), cfg.matched.charge*1.8]}) +
+    num('charge','Refrigerant charge','',1,40,1/16, () => cfg.charge, v => cfg.charge = v, {fmt: lbOz, parse: parseLbOz, hide: () => cfg.chargeMode !== 'realistic', minmax: () => [Math.max(0.5, cfg.matched.charge*0.3), cfg.matched.charge*1.8]}) +
     num('shT','Target superheat','°F',-15,40,0.5, () => cfg.shTarget, v => cfg.shTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
     num('scT','Target subcooling','°F',0,40,0.5, () => cfg.scTarget, v => cfg.scTarget = v, {hide: () => cfg.chargeMode !== 'sandbox'}) +
     num('lineLen','Line set length','ft',10,150,5, () => cfg.lineLen, v => cfg.lineLen = v) +
@@ -909,15 +919,15 @@ function buildControls(){
     const el = $(c.id);
     if (c.type === 'num') {
       const r = $(c.id + '-r');
-      el.addEventListener('change', () => applyCtl(c, +el.value));
-      r.addEventListener('input', () => { el.value = (+r.value).toFixed(c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : 1) : 0)); });
+      el.addEventListener('change', () => applyCtl(c, c.parse ? c.parse(el.value) : +el.value));
+      r.addEventListener('input', () => { el.value = c.fmt ? c.fmt(+r.value) : (+r.value).toFixed(c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : 1) : 0)); });
       r.addEventListener('change', () => applyCtl(c, +r.value));
     } else el.addEventListener('change', () => applyCtl(c, el.value));
   }
   document.querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => {
     const c = CTL.find(x => x.id === b.dataset.step); applyCtl(c, +(c.get()) + (+b.dataset.dir) * c.step);
   }));
-  $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
+  $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), lbOz(cfg.charge)), true));
   $('faultHide').addEventListener('click', () => { cfg.faultsHidden = !cfg.faultsHidden; save(); syncControls(); renderProbe(); logEvent(cfg.faultsHidden ? 'Issue settings hidden.' : 'Issue settings shown.'); });
   $('faultClear').addEventListener('click', () => { cfg.faults = {}; change('All issues cleared'); });
   $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); ensureFz(); change('Switch settings restored to defaults'); });
@@ -983,7 +993,7 @@ function applyCtl(c, v){
   if (String(before) === String(c.get())) { syncControls(); return; }
   if (c.secret) { change('An issue setting was changed'); return; }
   const unit = c.unit ? ' ' + c.unit : '';
-  const show = x => typeof x === 'number' ? (+x.toFixed(c.dec ?? 2)).toString() : x;
+  const show = x => typeof x === 'number' ? (c.fmt ? c.fmt(x) : (+x.toFixed(c.dec ?? 2)).toString()) : x;
   change(`${LBL(c.label)}: ${show(before)} → ${show(c.get())}${unit}`, c.id === 'refr' || c.id === 'tons');
 }
 function syncControls(){
@@ -993,15 +1003,15 @@ function syncControls(){
     const v = c.get();
     if (c.type === 'num') {
       const dec = c.dec ?? (c.step < 1 ? (c.step < 0.1 ? 2 : (c.step < 0.5 ? 2 : 1)) : 0);
-      $(c.id).value = (+v).toFixed(dec);
+      $(c.id).value = c.fmt ? c.fmt(+v) : (+v).toFixed(dec);
       const r = $(c.id + '-r'); const [mn, mx] = c.minmax ? c.minmax() : [c.min, c.max];
       r.min = mn; r.max = mx; r.value = v;
     } else $(c.id).value = String(v);
   }
   const m = cfg.matched;
   const llAdj = (cfg.lineLen - 25) * 0.6 / 16;
-  $('chargeNote').innerHTML = `Factory charge ${m.charge} lb (for 25 ft). ` + (cfg.lineLen !== 25 ? `For ${cfg.lineLen} ft the installer would ${llAdj > 0 ? 'add' : 'remove'} about ${Math.abs(llAdj).toFixed(2)} lb (0.6 oz/ft of 3/8" liquid line). ` : '') +
-    (cfg.chargeMode === 'sandbox' && res ? `<br>This target needs <b>${res.inv.toFixed(2)} lb</b> in the system right now.` : `Charge is now ${(cfg.charge - m.charge >= 0 ? '+' : '')}${(cfg.charge - m.charge).toFixed(2)} lb vs factory.`);
+  $('chargeNote').innerHTML = `Factory charge ${lbOz(m.charge)} (for 25 ft). ` + (cfg.lineLen !== 25 ? `For ${cfg.lineLen} ft the installer would ${llAdj > 0 ? 'add' : 'remove'} about ${lbOz(Math.abs(llAdj))} (0.6 oz/ft of 3/8" liquid line). ` : '') +
+    (cfg.chargeMode === 'sandbox' && res ? `<br>This target needs <b>${lbOz(res.inv)}</b> in the system right now.` : `Charge is now ${Math.round(Math.abs(cfg.charge - m.charge) * 16) ? lbOz(cfg.charge - m.charge, true) + ' vs factory' : 'at factory charge'}. Type a weight like 7 lb 4 oz, 7 4, or 116 oz.`);
   const fh = $('faultHide'); if (fh) { fh.textContent = cfg.faultsHidden ? 'Show issues (instructor)' : 'Hide issues from trainees'; $('faultClear').style.display = cfg.faultsHidden ? 'none' : ''; $('faultNote').textContent = cfg.faultsHidden ? 'Issue settings are hidden. Diagnose the system from the gauges, temperatures and amps.' : 'Set one or more faults, then hide them before handing the simulator to a trainee. Changes here are not detailed in the log.' + (cfg.elec.phase === 3 ? '' : ' Out-of-phase wiring needs a three-phase supply (Electrical supply).'); }
   const fn = $('fzNote'); if (fn) fn.textContent = (idW() || odW()) ? `Freeze protection stops the compressor when a water loop's leaving fluid falls to the cut-out, and resets 10°F above it. Typical cut-out: 38°F for water, about 8°F above the freeze point for glycol (${E.WFLUID[cfg.water.fluid||'water'].name}: ${fzDefault(cfg.water.fluid)}°F).` : '';
   const an = $('airNote'); if (an) an.textContent = idW() && odW() ? 'No air side on this unit — both heat exchangers are water-to-refrigerant.' : idW() ? 'Indoor side is a water loop, so there is no blower. Outdoor fan airflow still applies.' : 'PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.';
@@ -1053,8 +1063,8 @@ function renderReadings(){
   const mp = r.mParts, tot = Object.values(mp).reduce((x,y) => x+y, 0);
   const cols = {cond:'var(--cond)', evap:'var(--mix)', liquidLine:'var(--liq)', vaporLine:'var(--suct)', compressorAcc:'var(--muted)'};
   const names = {cond:'Condenser', evap:'Evaporator', liquidLine:'Liquid line', vaporLine:'Vapor line', compressorAcc:'Compressor, accumulator, oil'};
-  h += `<h2 style="margin-top:14px">Where the charge sits (${tot.toFixed(2)} lb)</h2><div class="bar">${Object.entries(mp).map(([k,v]) => `<i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i>`).join('')}</div>` +
-    Object.entries(mp).map(([k,v]) => `<div class="mini"><span>${names[k]}</span><div class="bar"><i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i></div><b>${v.toFixed(2)} lb</b></div>`).join('');
+  h += `<h2 style="margin-top:14px">Where the charge sits (${lbOz(tot)})</h2><div class="bar">${Object.entries(mp).map(([k,v]) => `<i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i>`).join('')}</div>` +
+    Object.entries(mp).map(([k,v]) => `<div class="mini"><span>${names[k]}</span><div class="bar"><i style="width:${(v/tot*100).toFixed(1)}%;background:${cols[k]}"></i></div><b>${lbOz(v)}</b></div>`).join('');
   $('tab-readings').innerHTML = h;
 }
 function renderElec(){

@@ -78,7 +78,7 @@ const GLOSSARY = {
   'coil surface': 'Wet if the coil is below the entering air dew point and removing moisture; dry otherwise.',
   'moisture removed': 'Drop in humidity ratio across the coil, grains of water per pound of dry air.',
   'refrigerant δp': 'Refrigerant pressure drop through the coil.',
-  'charge held': 'Pounds of refrigerant sitting in this part right now.',
+  'charge held': 'Weight of refrigerant (lb and oz) sitting in this part right now.',
   // metering
   'inlet': 'Pressure entering the metering device.',
   'inlet liquid': 'Condition of the liquid feeding the metering device. Flash gas here means no liquid seal (short charge or restriction).',
@@ -152,7 +152,7 @@ const GLOSSARY = {
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',
   'charging mode': 'Realistic: set charge and metering, the system finds SH/SC. Sandbox: set SH/SC directly.',
-  'refrigerant charge': 'Pounds of refrigerant in the system.',
+  'refrigerant charge': 'Weight of refrigerant in the system, in pounds and ounces (16 oz = 1 lb). Steps are 1 oz. Type it as 7 lb 4 oz, 7 4, 7.25 (pounds) or 116 oz.',
   'target superheat': 'Superheat the sandbox will hold. Below 0 forces floodback: each degree below zero sends about 3% more liquid out of the evaporator (−5 ≈ 15% liquid, −15 ≈ 45%). The gauges still read near 0°F superheat on low-glide refrigerants, because a wet suction line sits at saturation — only blends with glide such as R-407C read negative.',
   'dsh': 'Discharge superheat: discharge line temperature minus the condensing (dew) temperature at discharge pressure. Healthy is roughly 40–80°F. Below about 30°F liquid is likely reaching the compressor — the best floodback check, since suction superheat can only fall to about zero.',
   'target subcooling': 'Subcooling the sandbox will hold.',
