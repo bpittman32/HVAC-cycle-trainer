@@ -13,7 +13,9 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - Refrigerants: R-410A, R-454B, R-32, R-407C (large glide), R-404A
 - Charge in pounds, tracked by refrigerant mass in every coil and line; sandbox mode sets superheat/subcooling targets directly
 - TXV, piston or EEV on each coil; single-speed, two-stage or inverter compressor
-- Tube-and-fin, microchannel or coaxial water coils; ECM or PSC blower with duct static
+- Indoor and outdoor heat exchangers: tube-and-fin or microchannel (air), coaxial, shell-and-tube or brazed plate (water). Any combination works: air-to-air, water-source, air-to-water, water-to-water. The schematic redraws to match.
+- Water loops on either side with adjustable flow, entering temperature and fluid (water, propylene or ethylene glycol 20/30/40%), freeze-point warnings
+- ECM or PSC blower with duct static
 - High/low pressure switches with trips, anti-short-cycle and lockout
 - Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart

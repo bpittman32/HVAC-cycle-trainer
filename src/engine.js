@@ -90,10 +90,23 @@ const Psy = {
 
 /* ---------------- Equipment catalogue ---------------- */
 const COIL = {
-  tf: { name: 'Tube & fin', NTUe: 0.85, NTUc: 1.15, NTUcId: 1.5, NTUeOd: 1.1, volE: 0.034, volC: 0.085, dpE: 4, dpC: 5, cfmId: 400, cfmOd: 900 },
-  mc: { name: 'Microchannel', NTUe: 1.0, NTUc: 1.4, NTUcId: 1.75, NTUeOd: 1.3, volE: 0.013, volC: 0.026, dpE: 5, dpC: 6, cfmId: 400, cfmOd: 820 },
-  water: { name: 'Coaxial (water)', NTUe: 2.3, NTUc: 2.3, NTUcId: 2.3, NTUeOd: 2.3, volE: 0.045, volC: 0.045, dpE: 6, dpC: 6 },
+  tf:    { name: 'Tube & fin', air: true, NTUe: 0.85, NTUc: 1.15, NTUcId: 1.5, NTUeOd: 1.1, volE: 0.034, volC: 0.085, dpE: 4, dpC: 5, cfmId: 400, cfmOd: 900 },
+  mc:    { name: 'Microchannel', air: true, NTUe: 1.0, NTUc: 1.4, NTUcId: 1.75, NTUeOd: 1.3, volE: 0.013, volC: 0.026, dpE: 5, dpC: 6, cfmId: 400, cfmOd: 820 },
+  water: { name: 'Coaxial', NTUe: 2.3, NTUc: 2.3, NTUcId: 2.3, NTUeOd: 2.3, volE: 0.045, volC: 0.045, dpE: 6, dpC: 6 },
+  shell: { name: 'Shell & tube', NTUe: 2.0, NTUc: 2.1, NTUcId: 2.1, NTUeOd: 2.0, volE: 0.16, volC: 0.16, dpE: 3, dpC: 3 },
+  plate: { name: 'Brazed plate', NTUe: 3.2, NTUc: 3.4, NTUcId: 3.4, NTUeOd: 3.2, volE: 0.012, volC: 0.012, dpE: 5, dpC: 5 },
 };
+/* Secondary fluids: cp Btu/lb-F, specific gravity, freeze point °F, heat-transfer factor */
+const WFLUID = {
+  water: { name: 'Water', cp: 1.0, sg: 1.0, fp: 32, ua: 1.0 },
+  pg20: { name: 'Propylene glycol 20%', cp: 0.96, sg: 1.02, fp: 19, ua: 0.92 },
+  pg30: { name: 'Propylene glycol 30%', cp: 0.93, sg: 1.03, fp: 9, ua: 0.86 },
+  pg40: { name: 'Propylene glycol 40%', cp: 0.89, sg: 1.04, fp: -6, ua: 0.8 },
+  eg20: { name: 'Ethylene glycol 20%', cp: 0.92, sg: 1.03, fp: 16, ua: 0.94 },
+  eg30: { name: 'Ethylene glycol 30%', cp: 0.87, sg: 1.04, fp: 4, ua: 0.9 },
+  eg40: { name: 'Ethylene glycol 40%', cp: 0.82, sg: 1.05, fp: -11, ua: 0.85 },
+};
+const isWater = t => !COIL[t].air;
 function lineIDs(tons) {
   const liq = tons <= 5 ? 0.311 : 0.430;
   const vap = tons <= 2 ? 0.555 : tons <= 3 ? 0.666 : tons <= 4 ? 0.785 : tons <= 7.5 ? 1.025 : 1.265;
@@ -114,33 +127,34 @@ function defaultSwitches(F) {
 function buildCtx(cfg, FL) {
   const F = FL[cfg.refrigerant], tons = cfg.tons, heat = cfg.mode === 'heat';
   const idC = COIL[cfg.indoor.type], odC = COIL[cfg.outdoor.type];
-  const water = cfg.outdoor.type === 'water';
+  const idW = isWater(cfg.indoor.type), water = isWater(cfg.outdoor.type);
   const L = cfg.lineLen, ids = lineIDs(tons);
-  // airflows
-  const idCfmNom = idC.cfmId * tons;
-  let idCfm;
-  const esp = cfg.blower.esp;
-  if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
-  else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
-  idCfm *= cfg.faults?.idAirflow ?? 1;
-  idCfm = Math.max(idCfm, 0.04 * idC.cfmId * tons);          // leakage/natural draft floor
-  const odCfmNom = (odC.cfmOd || 900) * tons, odCfm = Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (cfg.faults?.odAirflow ?? 1));
-  const idAir = heat ? { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) } : { db: cfg.cond.idDB, W: Psy.W_DBWB(cfg.cond.idDB, cfg.cond.idWB) };
-  const odAir = { db: cfg.cond.odDB, W: Psy.W_DBWB(cfg.cond.odDB, Math.min(cfg.cond.odWB, cfg.cond.odDB)) };
-  const air = (a, cfm) => { const v = Psy.v(a.db, a.W), ma = cfm * 60 / v; return { kind: 'air', T: a.db, W: a.W, h: Psy.h(a.db, a.W), ma, C: ma * (0.240 + 0.444 * a.W), cfm }; };
-  const gpmNom = 3 * tons, gpm = Math.max(0.1 * tons, cfg.water.gpm);
-  const wtr = { kind: 'water', T: cfg.water.ewt, C: gpm * 500, gpm, ma: gpm * 500 };
-  const idStream = air(idAir, idCfm), odStream = water ? wtr : air(odAir, odCfm);
-  // coil UA
-  const sz = s => s / 100;
-  const idNomC = idCfmNom * 60 / 13.5 * 0.244, odNomC = water ? gpmNom * 500 : odCfmNom * 60 / 13.7 * 0.242;
   const fouling = cfg.faults || {};
-  const idUA = (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, 0.5) * (fouling.idUA ?? 1);
-  const odUA = (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (fouling.odUA ?? 1);
+  // indoor airflow
+  const idCfmNom = (idC.cfmId || 400) * tons;
+  let idCfm = 0;
+  if (!idW) {
+    const esp = cfg.blower.esp;
+    if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
+    else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
+    idCfm *= fouling.idAirflow ?? 1;
+    idCfm = Math.max(idCfm, 0.04 * idCfmNom);                 // leakage/natural draft floor
+  }
+  const odCfmNom = (odC.cfmOd || 900) * tons;
+  const odCfm = water ? 0 : Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (fouling.odAirflow ?? 1));
+  const air = (db, wb, cfm) => { const W = Psy.W_DBWB(db, Math.min(wb, db)), v = Psy.v(db, W), ma = cfm * 60 / v; return { kind: 'air', T: db, W, h: Psy.h(db, W), ma, C: ma * (0.240 + 0.444 * W), cfm }; };
+  const loop = w => { const fl = WFLUID[w.fluid || 'water'], gpm = Math.max(0.1 * tons, w.gpm); const C = gpm * 500 * fl.cp * fl.sg; return { kind: 'water', T: w.ewt, C, ma: C, gpm, fluid: fl, fluidKey: w.fluid || 'water' }; };
+  const idStream = idW ? loop(cfg.idWater) : air(cfg.cond.idDB, cfg.cond.idWB, idCfm);
+  const odStream = water ? loop(cfg.water) : air(cfg.cond.odDB, cfg.cond.odWB, odCfm);
+  // coil UA (scales with stream capacity rate; glycol lowers film coefficient)
+  const sz = s => s / 100, gpmNom = 3 * tons;
+  const idNomC = idW ? gpmNom * 500 : idCfmNom * 60 / 13.5 * 0.244, odNomC = water ? gpmNom * 500 : odCfmNom * 60 / 13.7 * 0.242;
+  const idUA = (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, idW ? 0.6 : 0.5) * (idW ? idStream.fluid.ua : 1) * (fouling.idUA ?? 1);
+  const odUA = (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (water ? odStream.fluid.ua : 1) * (fouling.odUA ?? 1);
   const idVol = (heat ? idC.volC : idC.volE) * tons * sz(cfg.indoor.size);
   const odVol = (heat ? odC.volE : odC.volC) * tons * sz(cfg.outdoor.size);
   const ctx = {
-    F, cfg, tons, heat, water, ids,
+    F, cfg, tons, heat, water, idWater: idW, ids,
     evap: heat ? { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpE, name: 'outdoor' } : { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpE, name: 'indoor' },
     cond: heat ? { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpC * 0.8, name: 'indoor' } : { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpC, name: 'outdoor' },
     idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom,
@@ -149,7 +163,6 @@ function buildCtx(cfg, FL) {
     mNom: cfg.matched.mNom, rhoSucNom: cfg.matched.rhoSucNom,
     disp: cfg.matched.disp,
   };
-  // compressor speed
   const c = cfg.comp; let spd = 1;
   if (c.type === 'two') spd = c.stage === 'low' ? 0.67 : 1;
   else if (c.type === 'inv') spd = c.speed / 100;
@@ -365,9 +378,9 @@ function electrical(cfg, ctx, c, running) {
   // indoor blower
   const esp = cfg.blower.esp;
   const effB = cfg.blower.type === 'ecm' ? 0.26 : 0.16;
-  const bW = cfg.blowerOn ? 0.1175 * ctx.idCfm * Math.max(0.1, esp + 0.15) / effB : 0;
+  const bW = cfg.blowerOn && !ctx.idWater ? 0.1175 * ctx.idCfm * Math.max(0.1, esp + 0.15) / effB : 0;
   e.blower = { W: bW, A: bW / (V * (cfg.blower.type === 'ecm' ? 0.65 : 0.88)), type: cfg.blower.type };
-  if (cfg.blower.type === 'psc' && cfg.blowerOn) { const C = cfg.elec.blowerCap * (cfg.faults?.blowerCapPct ?? 1); const Vc = V * 1.45; e.blower.capV = Vc; e.blower.capA = 377 * C * 1e-6 * Vc * 0.5; e.blower.capRated = cfg.elec.blowerCap; e.blower.capMeas = e.blower.capA * 2652 / Vc; }
+  if (cfg.blower.type === 'psc' && cfg.blowerOn && !ctx.idWater) { const C = cfg.elec.blowerCap * (cfg.faults?.blowerCapPct ?? 1); const Vc = V * 1.45; e.blower.capV = Vc; e.blower.capA = 377 * C * 1e-6 * Vc * 0.5; e.blower.capRated = cfg.elec.blowerCap; e.blower.capMeas = e.blower.capA * 2652 / Vc; }
   // outdoor fan
   const odOn = running && !ctx.water;
   const ofW = odOn ? fanW(60 * tons, ctx.odCfm, ctx.odCfmNom) * (cfg.faults?.odAirflow === 0 ? 0 : 1) + (odOn ? 15 : 0) : 0;
@@ -409,14 +422,15 @@ function match(cfg, FL) {
   // size compressor, factory charge and metering for the chosen refrigerant/tonnage/coils
   const F = FL[cfg.refrigerant], tons = cfg.tons, Qn = tons * 12000;
   const c = JSON.parse(JSON.stringify(cfg));
-  c.faults = {}; c.blower.cfm = COIL[c.indoor.type].cfmId * tons; c.blower.esp = 0.5; c.odFan.pct = 100; c.water.gpm = 3 * tons;
+  c.faults = {}; c.blower.cfm = (COIL[c.indoor.type].cfmId || 400) * tons; c.blower.esp = 0.5; c.odFan.pct = 100;
+  c.water = { gpm: 3 * tons, ewt: 86, fluid: 'water' }; c.idWater = { gpm: 3 * tons, ewt: 54, fluid: 'water' };
   c.comp.stage = 'high'; c.comp.speed = 100;
   const Pe = F.pDew(46), rhoS = F.vap(Pe, 10).rho;
   const dh = F.vap(Pe, 10).h - F.hLiqT(105);
   let mNom = Qn / dh;
   c.matched = { disp: mNom / (rhoS * 0.94), mNom, rhoSucNom: rhoS, in: {}, out: {} };
   // cooling AHRI A
-  c.mode = 'cool'; c.cond = { idDB: 80, idWB: 67, odDB: 95, odWB: 75 }; c.water.ewt = 86;
+  c.mode = 'cool'; c.cond = { idDB: 80, idWB: 67, odDB: 95, odWB: 75 }; c.water.ewt = 86; c.idWater.ewt = 54;
   c.chargeMode = 'sandbox'; c.shTarget = 10; c.scTarget = 10;
   let s, guess = null;
   for (let k = 0; k < 6; k++) {
@@ -438,7 +452,7 @@ function match(cfg, FL) {
   };
   // heating charge requirement (sandbox SC 8 at H1)
   const h = JSON.parse(JSON.stringify(c));
-  h.mode = 'heat'; h.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; h.water.ewt = 68; h.shTarget = 8; h.scTarget = 8;
+  h.mode = 'heat'; h.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; h.water.ewt = 68; h.idWater.ewt = 104; h.shTarget = 8; h.scTarget = 8;
   m.Vcomp = 0; m.VcompH = 0;
   const hs = solve(h, FL, null);
   const coolReq = s.inv, heatReq = hs.inv;
@@ -454,7 +468,7 @@ function match(cfg, FL) {
   m.in = sizeMeter(s);
   m.idCfm = c.blower.cfm;
   // heating H1 — outdoor metering sized with factory charge
-  c.mode = 'heat'; c.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; c.water.ewt = 68;
+  c.mode = 'heat'; c.cond = { idDB: 70, idWB: 60, odDB: 47, odWB: 43 }; c.water.ewt = 68; c.idWater.ewt = 104;
   c.chargeMode = 'size'; c.charge = m.charge; c.shTarget = 8;
   const sh = solve(c, FL, null);
   m.out = sizeMeter(sh);
@@ -462,6 +476,6 @@ function match(cfg, FL) {
   return m;
 }
 
-const API = { Fluid, Psy, COIL, lineIDs, defaultSwitches, buildCtx, cycle, solve, match, electrical, PATM, clamp };
+const API = { Fluid, Psy, COIL, WFLUID, isWater, lineIDs, defaultSwitches, buildCtx, cycle, solve, match, electrical, PATM, clamp };
 if (typeof module !== 'undefined') module.exports = API; else root.HPEngine = API;
 })(this);
