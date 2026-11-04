@@ -153,7 +153,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.3.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.4.0</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -320,23 +320,28 @@ function defaultSwitches(F) {
 
 /* ---------------- Context builder ---------------- */
 function buildCtx(cfg, FL) {
-  const F = FL[cfg.refrigerant], tons = cfg.tons, heat = cfg.mode === 'heat';
+  const fx = cfg.faults || {};
+  // the reversing valve decides the refrigerant flow; a stuck valve ignores the thermostat
+  const F = FL[cfg.refrigerant], tons = cfg.tons, heat = fx.rv === 'stuckCool' ? false : fx.rv === 'stuckHeat' ? true : cfg.mode === 'heat';
   const idC = COIL[cfg.indoor.type], odC = COIL[cfg.outdoor.type];
   const idW = isWater(cfg.indoor.type), water = isWater(cfg.outdoor.type);
+  const three = cfg.elec.phase === 3;
   const L = cfg.lineLen, ids = lineIDs(tons);
   const fouling = cfg.faults || {};
   // indoor airflow
   const idCfmNom = (idC.cfmId || 400) * tons;
-  let idCfm = 0;
+  let idCfm = 0, idCfmCmd = 0;
   if (!idW) {
     const esp = cfg.blower.esp;
     if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
     else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
     idCfm *= fouling.idAirflow ?? 1;
+    idCfmCmd = idCfm;
+    if (three && fx.blowerRev) idCfm *= 0.45;                   // centrifugal wheel turning backward
     idCfm = Math.max(idCfm, 0.04 * idCfmNom);                 // leakage/natural draft floor
   }
   const odCfmNom = (odC.cfmOd || 900) * tons;
-  const odCfm = water ? 0 : Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (fouling.odAirflow ?? 1));
+  const odCfm = water ? 0 : Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (fouling.odAirflow ?? 1) * (three && fx.odFanRev ? 0.3 : 1));
   const air = (db, wb, cfm) => { const W = Psy.W_DBWB(db, Math.min(wb, db)), v = Psy.v(db, W), ma = cfm * 60 / v; return { kind: 'air', T: db, W, h: Psy.h(db, W), ma, C: ma * (0.240 + 0.444 * W), cfm }; };
   const loop = w => { const fl = WFLUID[w.fluid || 'water'], gpm = Math.max(0.1 * tons, w.gpm); const C = gpm * 500 * fl.cp * fl.sg; return { kind: 'water', T: w.ewt, C, ma: C, gpm, fluid: fl, fluidKey: w.fluid || 'water' }; };
   const idStream = idW ? loop(cfg.idWater) : air(cfg.cond.idDB, cfg.cond.idWB, idCfm);
@@ -344,15 +349,16 @@ function buildCtx(cfg, FL) {
   // coil UA (scales with stream capacity rate; glycol lowers film coefficient)
   const sz = s => s / 100, gpmNom = 3 * tons;
   const idNomC = idW ? gpmNom * 500 : idCfmNom * 60 / 13.5 * 0.244, odNomC = water ? gpmNom * 500 : odCfmNom * 60 / 13.7 * 0.242;
-  const idUA = (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, idW ? 0.6 : 0.5) * (idW ? idStream.fluid.ua : 1) * (fouling.idUA ?? 1);
-  const odUA = (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (water ? odStream.fluid.ua : 1) * (fouling.odUA ?? 1);
+  const ncUA = 1 - 0.35 * (fx.nc || 0);   // air blankets part of the condenser
+  const idUA = (heat ? ncUA : 1) * (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, idW ? 0.6 : 0.5) * (idW ? idStream.fluid.ua : 1) * (fouling.idUA ?? 1);
+  const odUA = (heat ? 1 : ncUA) * (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (water ? odStream.fluid.ua : 1) * (fouling.odUA ?? 1);
   const idVol = (heat ? idC.volC : idC.volE) * tons * sz(cfg.indoor.size);
   const odVol = (heat ? odC.volE : odC.volC) * tons * sz(cfg.outdoor.size);
   const ctx = {
     F, cfg, tons, heat, water, idWater: idW, ids,
     evap: heat ? { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpE, name: 'outdoor' } : { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpE, name: 'indoor' },
     cond: heat ? { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpC * 0.8, name: 'indoor' } : { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpC, name: 'outdoor' },
-    idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom,
+    idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom, idCfmCmd, odCfmCmd: water ? 0 : odCfmNom * cfg.odFan.pct / 100,
     Vll: area(ids.liq) * L, Vvl: area(ids.vap) * L,
     Vcomp: cfg.matched.Vcomp || 0, VcompH: cfg.matched.VcompH || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
     mNom: cfg.matched.mNom, rhoSucNom: cfg.matched.rhoSucNom,
@@ -361,7 +367,11 @@ function buildCtx(cfg, FL) {
   const c = cfg.comp; let spd = 1;
   if (c.type === 'two') spd = c.stage === 'low' ? 0.67 : 1;
   else if (c.type === 'inv') spd = c.speed / 100;
-  ctx.speed = spd * (fouling.compSpeed ?? 1);
+  ctx.compRev = three && !!fx.compRev;
+  ctx.speed = spd * (fouling.compSpeed ?? 1) * (ctx.compRev ? 0.03 : 1);
+  ctx.rvLeak = fx.rv === 'leakSmall' ? 0.08 : fx.rv === 'leakLarge' ? 0.2 : 0;
+  ctx.pnc = 75 * (fx.nc || 0);                                  // psi of air partial pressure in the condenser
+  ctx.txvFault = heat ? fx.odTxv : fx.idTxv;
   ctx.meter = heat ? cfg.outdoor : cfg.indoor;
   ctx.meterK = heat ? cfg.matched.out : cfg.matched.in;
   return ctx;
@@ -391,62 +401,68 @@ function cycle(ctx, x, detail) {
   let xEo = we >= 0 ? 1 : clamp(1 + we / 100, 0.3, 1);
   const kv = 2.5 * (cfg.lineLen / 25) * rN / (mN * mN), kRV = 1.5 * rN / (mN * mN), kAcc = 1.0 * rN / (mN * mN);
   const sucRestr = (cfg.faults?.suctionRestr ?? 0) * 8 * kv;
-  let m = mN, Ps = PeOut, rhoS = 1, shS = 0, wet = false, hEo = hdE, SH = 0, dPs = 0, Pd = PcIn, PR = 2, etaV = 0.9, dPd = 0;
-  for (let k = 0; k < 6; k++) {
-    if (we > 0) {
-      const Ca = fsh * es.C, Cr = m * cpv, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
-      const eps = effCF(fsh * ctx.evap.UA / Cmin, Cmin / Cmax);
-      hEo = hdE + eps * Cmin * Math.max(0, es.T - Te) / m;
-    } else hEo = hbE + xEo * (hdE - hbE);
-    const rhoEo = F.state(PeOut, hEo).rho;
-    dPs = ((ctx.heat ? 0 : kv) + kRV + kAcc + sucRestr) * m * m / rhoEo;
-    Ps = Math.max(F.Pmin * 1.01, PeOut - dPs);
-    const st = F.state(Ps, hEo);
-    wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
-    dPd = (ctx.heat ? kv * m * m / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (m / mN) ** 2;
-    Pd = PcIn + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
-    etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
-    m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
+  // faults: hot-gas bypass through a leaking reversing valve, reversed (out-of-phase) compressor, non-condensables
+  const fl = ctx.rvLeak || 0, pnc = ctx.pnc || 0;
+  let m = mN, mr = mN, Ps = PeOut, rhoS = 1, shS = 0, wet = false, hEo = hdE, SH = 0, dPs = 0, Pd = PcIn, PR = 2, etaV = 0.9, dPd = 0;
+  let h1 = hdE, hDis = hdE + 20, Wel = 0, etaIs = 0.7, h2s = hdE, hsucEff = hdE, shSuc = 0;
+  for (let outer = 0; outer < (fl > 0 ? 5 : 1); outer++) {
+    for (let k = 0; k < 6; k++) {
+      if (we > 0) {
+        const Ca = fsh * es.C, Cr = mr * cpv, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
+        const eps = effCF(fsh * ctx.evap.UA / Cmin, Cmin / Cmax);
+        hEo = hdE + eps * Cmin * Math.max(0, es.T - Te) / mr;
+      } else hEo = hbE + xEo * (hdE - hbE);
+      h1 = (1 - fl) * hEo + fl * hDis;                      // leak mixes hot gas into the suction
+      const rhoEo = F.state(PeOut, hEo).rho;
+      dPs = ((ctx.heat ? 0 : kv) + kRV + kAcc + sucRestr) * mr * mr / rhoEo;
+      Ps = Math.max(F.Pmin * 1.01, PeOut - dPs);
+      const st = F.state(Ps, h1);
+      wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
+      dPd = (ctx.heat ? kv * mr * mr / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (mr / mN) ** 2;
+      Pd = PcIn + pnc + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
+      etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
+      m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
+      mr = Math.max(1, m * (1 - fl));
+    }
+    shSuc = wet ? 0 : shS;
+    hsucEff = wet ? F.hDew(Ps) : h1;
+    h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
+    etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
+    if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
+    if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
+    etaIs *= cfg.faults?.compEff ?? 1;
+    const etaMot = cfg.comp.type === 'inv' ? 0.88 : 0.9;
+    if (ctx.compRev) { Wel = 0.45 * (cfg.matched.Wnom || 2500) * 3.412; hDis = h1 + 28; }   // scroll turning backward: no pumping, little power, hot shell
+    else { Wel = m * (h2s - hsucEff) / etaIs / etaMot; hDis = h1 + Wel * (1 - 0.07) / m; }
   }
   SH = we > 0 ? F.shFromH(PeOut, hEo) : 0;
-  // compression
-  const h1 = hEo, shSuc = wet ? 0 : shS;
-  const hsucEff = wet ? F.hDew(Ps) : h1;
-  const h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
-  let etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
-  if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
-  if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
-  etaIs *= cfg.faults?.compEff ?? 1;
-  const etaMot = cfg.comp.type === 'inv' ? 0.88 : 0.9;
-  const Wel = m * (h2s - hsucEff) / etaIs / etaMot;
-  const hDis = h1 + Wel * (1 - 0.07) / m;
   // condenser
-  const Pco = PcIn - ctx.cond.dp * (m / mN) ** 1.8;
+  const Pco = PcIn - ctx.cond.dp * (mr / mN) ** 1.8;
   const hdC = F.hDew(PcIn), tdC = F.tDew(PcIn), tbCo = F.tBub(Pco), hbCo = F.hBub(Pco);
   const disSt = F.state(PcIn, hDis);
   const f3 = wc > 0 ? Math.min(wc / 100, 0.98) : 0;
   let hCo, xCo = 0, SC = 0, Tliq;
   if (wc > 0) {
     const cpl = (F.hLiqT(tbCo) - F.hLiqT(tbCo - 10)) / 10;
-    const Ca = f3 * cs.C, Cr = m * cpl, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
+    const Ca = f3 * cs.C, Cr = mr * cpl, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
     const eps = effCF(f3 * ctx.cond.UA / Cmin, Cmin / Cmax);
-    hCo = hbCo - eps * Cmin * Math.max(0, tbCo - cs.T) / m;
+    hCo = hbCo - eps * Cmin * Math.max(0, tbCo - cs.T) / mr;
     Tliq = F.liqTfromH(hCo); SC = tbCo - Tliq;
   } else { xCo = clamp(-wc / 100, 0, 0.95); hCo = hbCo + xCo * (F.hDew(Pco) - hbCo); Tliq = F.state(Pco, hCo).T; }
-  const Q1 = m * Math.max(0, hDis - hdC);
+  const Q1 = mr * Math.max(0, hDis - hdC);
   const f1 = fracForQ(Q1, ctx.cond.UA, cs, Q1 / Math.max(0.5, disSt.T - tdC), disSt.T, 0, true);
   const hEnd2 = wc > 0 ? hbCo : hCo, Tend2 = wc > 0 ? tbCo : Tliq;
-  const Q2 = m * Math.max(0, hdC - hEnd2);
+  const Q2 = mr * Math.max(0, hdC - hEnd2);
   const eps2 = 1 - Math.exp(-ctx.cond.UA / cs.C);
   const f2 = Q2 / Math.max(1, eps2 * cs.C * Math.max(0.05, 0.5 * (tdC + Tend2) - cs.T));
   const r2 = 1 - (f1 + f2 + f3);
   // liquid line, metering, evaporator inlet
-  const Pmi = Pco - 1.5 * (cfg.lineLen / 25) * (m / mN) ** 1.8 - (cfg.faults?.liquidRestr ?? 0) * 60 * (m / mN) ** 2;
-  const PeIn = PeOut + ctx.evap.dp * (m / mN) ** 1.8;
+  const Pmi = Pco - 1.5 * (cfg.lineLen / 25) * (mr / mN) ** 1.8 - (cfg.faults?.liquidRestr ?? 0) * 60 * (mr / mN) ** 2;
+  const PeIn = PeOut + ctx.evap.dp * (mr / mN) ** 1.8;
   const hEi = hCo, eiSt = F.state(PeIn, hEi);
   const Tout2 = we >= 0 ? Te : F.state(PeOut, hEo).T;
   const Ttp = 0.5 * (eiSt.T + Tout2);
-  const QtpReq = m * Math.max(0, Math.min(hEo, hdE) - hEi);
+  const QtpReq = mr * Math.max(0, Math.min(hEo, hdE) - hEi);
   const epsE = 1 - Math.exp(-ctx.evap.UA / es.C);
   let qtp1, wetCoil = false;
   if (es.kind === 'air') {
@@ -459,10 +475,11 @@ function cycle(ctx, x, detail) {
   const mode = cfg.chargeMode;
   let r3, r4, mMeter = 0, open = null;
   const upSt = F.state(Pmi, hCo);
-  const dP = Math.max(0.1, Pmi - PeIn);
+  const dP = Math.max(0.1, Pmi + pnc - PeIn);
   const SHv = we >= 0 ? SH : we / 3;              // continuous "superheat signal" for flooded coil
   const SCv = wc >= 0 ? SC : wc / 3;
-  if (mode === 'sandbox' || mode === 'size') r3 = (SHv - cfg.shTarget) / 10;
+  if (ctx.compRev) r3 = (Pmi + pnc - PeIn) / 40;
+  else if (mode === 'sandbox' || mode === 'size') r3 = (SHv - cfg.shTarget) / 10;
   else {
     const M = ctx.meter, K = ctx.meterK, rho = upSt.rho;
     const tpPen = upSt.phase === '2ph' ? Math.max(0.15, 1 - 1.2 * upSt.x) : 1;
@@ -473,12 +490,16 @@ function cycle(ctx, x, detail) {
       const eev = M.meter === 'eev';
       const stat = eev ? M.eevSH - 0.3 : M.txvSet, G = eev ? 0.6 : 6;
       const Kf = (eev ? K.eevK : K.txvK) * (cfg.faults?.meterCap ?? 1);
-      let o = (SHv - stat) / G;
+      const tf = eev ? '' : ctx.txvFault;
+      let o = (SHv + (tf === 'looseBulb' ? 8 : 0) - stat) / G;          // loose bulb reads warm -> overfeeds
+      if (tf === 'stuckOpen') o = 1 + 0.0005 * o;
+      else if (tf === 'stuckPartial') o = 0.35 + 0.0005 * o;
+      else if (tf === 'lostCharge') o = 0.05 + 0.0005 * o;              // power element dead: spring closes it to the bleed
       if (cfg.faults?.txvStuck != null) o = cfg.faults.txvStuck + 0.0005 * o;
       open = o < 0 ? 0.004 * o : o > 1 ? 1 + 0.004 * (o - 1) : o;
       mMeter = 3600 * Kf * open * Math.sqrt(2 * GC * rho * dP * 144) * tpPen;
     }
-    r3 = (mMeter - m) / mN;
+    r3 = (mMeter - mr) / mN;
   }
   // charge inventory
   const sC = Math.max(1e-6, f1 + f2 + f3), sE = Math.max(1e-6, ftp + fsh);
@@ -501,7 +522,7 @@ function cycle(ctx, x, detail) {
   const res = [r1, r2, r3, r4];
   if (!detail) return res;
   Object.assign(out, { res, Te, Tc, SC, SH, zc: wc >= 0 ? SC : -xCo * 100, ze: we >= 0 ? SH : -(1 - xEo) * 100,
-    PeOut, PeIn, PcIn, Pco, Pmi, Ps, Pd, PR, dPs, dPd, m, h1, hDis, hCo, hEi, hEo, Wel, etaIs, etaV, shSuc, wet, disSt, upSt, eiSt,
+    PeOut, PeIn, PcIn, Pco, Pmi, Ps, Pd, PR, dPs, dPd, m, mr, fl, pnc, h1, hDis, hCo, hEi, hEo, Wel, etaIs, etaV, shSuc, wet, disSt, upSt, eiSt,
     Tliq, xCo, xEo, f: { f1, f2, f3, ftp, fsh }, inv, mMeter, open, qtp1, wetCoil, epsE, eps2, Ttp,
     mParts: { cond: mCond, evap: mEvap, liquidLine: mLL, vaporLine: mVL, compressorAcc: mShell } });
   return out;
@@ -568,24 +589,26 @@ function solveCtx(ctx, guess) {
 /* ---------------- Electrical ---------------- */
 function electrical(cfg, ctx, c, running) {
   const V = cfg.elec.volts * (cfg.faults?.voltage ?? 1), pf = 0.92, tons = cfg.tons;
+  const three = cfg.elec.phase === 3, k3 = three ? Math.sqrt(3) : 1, fx = cfg.faults || {};
   const e = { V };
   const fanW = (base, cfm, nom) => base * Math.pow(cfm / nom, 3);
   // indoor blower
   const esp = cfg.blower.esp;
   const effB = cfg.blower.type === 'ecm' ? 0.26 : 0.16;
-  const bW = cfg.blowerOn && !ctx.idWater ? 0.1175 * ctx.idCfm * Math.max(0.1, esp + 0.15) / effB : 0;
-  e.blower = { W: bW, A: bW / (V * (cfg.blower.type === 'ecm' ? 0.65 : 0.88)), type: cfg.blower.type };
+  const bW = cfg.blowerOn && !ctx.idWater ? 0.1175 * (ctx.idCfmCmd || ctx.idCfm) * Math.max(0.1, esp + 0.15) / effB : 0;
+  e.blower = { W: bW, A: bW / (k3 * V * (cfg.blower.type === 'ecm' ? 0.65 : 0.88)) * (three && fx.blowerRev ? 0.8 : 1), type: cfg.blower.type };
   if (cfg.blower.type === 'psc' && cfg.blowerOn && !ctx.idWater) { const C = cfg.elec.blowerCap * (cfg.faults?.blowerCapPct ?? 1); const Vc = V * 1.45; e.blower.capV = Vc; e.blower.capA = 377 * C * 1e-6 * Vc * 0.5; e.blower.capRated = cfg.elec.blowerCap; e.blower.capMeas = e.blower.capA * 2652 / Vc; }
   // outdoor fan
   const odOn = running && !ctx.water;
-  const ofW = odOn ? fanW(60 * tons, ctx.odCfm, ctx.odCfmNom) * (cfg.faults?.odAirflow === 0 ? 0 : 1) + (odOn ? 15 : 0) : 0;
-  e.odFan = { W: ofW, A: ofW / (V * 0.86) };
+  const ofW = odOn ? fanW(60 * tons, ctx.odCfmCmd || ctx.odCfm, ctx.odCfmNom) * (cfg.faults?.odAirflow === 0 ? 0 : 1) + (odOn ? 15 : 0) : 0;
+  e.odFan = { W: ofW, A: ofW / (k3 * V * 0.86) * (three && fx.odFanRev ? 0.9 : 1) };
   if (odOn) { const C = cfg.elec.fanCap * (cfg.faults?.fanCapPct ?? 1), Vc = V * 1.5; e.odFan.capV = Vc; e.odFan.capA = 377 * C * 1e-6 * Vc; e.odFan.capRated = cfg.elec.fanCap; e.odFan.capMeas = e.odFan.capA * 2652 / Vc; }
   // compressor
   const W = running && c ? c.Wel / 3.412 : 0;
   const inv = cfg.comp.type === 'inv';
   const comp = { W, type: cfg.comp.type };
-  if (inv) { comp.A = W / (V * 0.97); comp.hz = Math.round(ctx.speed * 75); }
+  if (inv) { comp.A = W / (k3 * V * 0.97); comp.hz = Math.round(ctx.speed * 75); }
+  else if (three) { comp.A = W / (k3 * V * pf); comp.L = [comp.A, comp.A * 1.01, comp.A * 0.99]; }
   else {
     const capPct = cfg.faults?.compCapPct ?? 1;
     const ampsBoost = 1 + 0.6 * Math.max(0, 1 - capPct);
@@ -597,7 +620,8 @@ function electrical(cfg, ctx, c, running) {
     comp.R = running ? Math.sqrt(Math.max(0, comp.C * comp.C - comp.S * comp.S * 0.55)) : 0;
     comp.capRated = cfg.elec.compCap; comp.capMeas = comp.S > 0 ? comp.S * 2652 / Vc : 0;
   }
-  comp.RLA = cfg.matched.RLA; comp.LRA = Math.round(cfg.matched.RLA * 5.2);
+  comp.RLA = Math.round(cfg.matched.RLA * (230 / (cfg.elec.nomV || 230)) / k3 * 10) / 10; comp.LRA = Math.round(comp.RLA * (three ? 7 : 5.2));
+  comp.three = three;
   e.comp = comp;
   e.odUnitA = comp.A + e.odFan.A;
   e.totalW = W + ofW + bW;
@@ -815,6 +839,17 @@ const GLOSSARY = {
   'entering water': 'Water or glycol temperature entering this heat exchanger.',
   'freeze cut-out (leaving fluid)': 'Freeze protection trips the compressor if leaving fluid falls to this temperature.',
   'standard test point': 'Rating and performance test conditions from the standard this unit type is tested to. Choosing one sets the mode, indoor and outdoor conditions, water temperatures and flows, and compressor stage or speed. Break-in runs the unit at its rating conditions before testing.',
+  'non-condensables (air in system)': 'Air or nitrogen trapped in the system. It collects in the condenser, adds its own pressure on top of the refrigerant\'s, and blankets condenser surface: high head, high apparent subcooling, high amps.',
+  'indoor txv condition': 'Fault on the indoor expansion valve (feeds the indoor coil in cooling).',
+  'outdoor txv condition': 'Fault on the outdoor expansion valve (feeds the outdoor coil in heating).',
+  'reversing valve condition': 'Fault on the reversing valve: stuck in one position, or leaking hot gas internally into the suction.',
+  'compressor wiring': 'Three-phase scroll compressors only pump when wired in the right phase rotation.',
+  'outdoor fan wiring': 'A three-phase fan wired out of phase runs backward and moves far less air.',
+  'blower wiring': 'A three-phase blower wired out of phase runs backward and moves far less air.',
+  'power supply': 'Single-phase or three-phase supply. Three-phase motors can be wired out of phase.',
+  'supply': 'Electrical supply to the outdoor unit.',
+  'l1 amps': 'Current on line 1 of the three-phase supply.', 'l2 amps': 'Current on line 2 of the three-phase supply.', 'l3 amps': 'Current on line 3 of the three-phase supply.',
+  'compressor l1': 'Compressor current on line 1.', 'compressor l2': 'Compressor current on line 2.', 'compressor l3': 'Compressor current on line 3.',
   'freeze protection': 'Stops the compressor when a water loop gets too cold.',
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',
@@ -989,7 +1024,7 @@ function defaults(){
     outdoor:{type:'tf',size:100,meter:'txv',txvSet:5,piston:0,eevSH:6},
     comp:{type:'single',stage:'high',speed:100},blower:{type:'ecm',cfm:1200,esp:0.5},odFan:{pct:100},
     water:{gpm:9,ewt:86,fluid:'water'},idWater:{gpm:9,ewt:54,fluid:'water'},cond:{idDB:80,idWB:67,odDB:95,odWB:75},
-    elec:{volts:230,compCap:35,fanCap:5,blowerCap:7.5},blowerOn:true,faults:{},sw:null,charge:null,matched:null,
+    elec:{volts:230,compCap:35,fanCap:5,blowerCap:7.5,phase:1,nomV:230},blowerOn:true,faults:{},sw:null,charge:null,matched:null,
     savedCond:{cool:{idDB:80,idWB:67,odDB:95,odWB:75,ewt:86,idEwt:54},heat:{idDB:70,idWB:60,odDB:47,odWB:43,ewt:68,idEwt:104}}};
 }
 let cfg = defaults();
@@ -998,7 +1033,8 @@ const save = () => { try { localStorage.setItem('hpct-cfg', JSON.stringify(cfg))
 const F = () => FL[cfg.refrigerant];
 const idW = () => E.isWater(cfg.indoor.type), odW = () => E.isWater(cfg.outdoor.type);
 const FLUIDOPTS = Object.entries(E.WFLUID).map(([k,v]) => [k, v.name]);
-const roleOf = side => ((side === 'od') === (cfg.mode === 'cool')) ? 'Condenser' : 'Evaporator';
+const physHeat = () => (typeof res !== 'undefined' && res && res.ctx) ? res.ctx.heat : cfg.mode === 'heat';
+const roleOf = side => ((side === 'od') === !physHeat()) ? 'Condenser' : 'Evaporator';
 const fzDefault = k => k === 'water' || !k ? 38 : E.WFLUID[k].fp + 8;
 const LBL = l => typeof l === 'function' ? l() : l;
 function ensureFz(){ if (cfg.sw && cfg.sw.fzOd == null) { cfg.sw.fzOd = fzDefault(cfg.water.fluid); cfg.sw.fzId = fzDefault(cfg.idWater.fluid); cfg.sw.fzOn = true; } }
@@ -1039,7 +1075,7 @@ function solveNow(){
 
 function airSide(r){
   const c = r.ctx, P = E.Psy;
-  const Qe = r.m * (r.hEo - r.hEi), Qc = r.m * (r.hDis - r.hCo);
+  const mr = r.mr || r.m, Qe = mr * (r.hEo - r.hEi), Qc = mr * (r.hDis - r.hCo);
   const out = {Qe, Qc};
   const es = c.evap.stream, cs = c.cond.stream;
   const ev = {}, co = {};
@@ -1074,8 +1110,9 @@ function points(r){
   const dPll = Math.max(0, r.Pco - r.Pmi);
   const dVL = r.ctx.heat ? (r.dPd - (r.m / r.ctx.mNom) ** 2) : r.dPs * 0.55;
   let st;
-  if (!heat) st = [[r.Pd, r.hDis],[r.PcIn, r.hDis],[r.Pco, r.hCo],[r.Pco - 0.15*dPll, r.hCo],[r.Pmi, r.hCo],[r.PeIn, r.hEi],[r.PeOut, r.hEo],[r.PeOut - dVL, r.hEo],[r.Ps, r.hEo]];
-  else st = [[r.Pd, r.hDis],[r.PeOut, r.hEo],[r.PeIn, r.hEi],[r.Pmi + 0.15*dPll, r.hCo],[r.Pco - 0.8*dPll, r.hCo],[r.Pco, r.hCo],[r.PcIn, r.hDis],[r.Pd - 0.3*Math.max(0,dVL), r.hDis],[r.Ps, r.hEo]];
+  const pn = r.pnc || 0;
+  if (!heat) st = [[r.Pd, r.hDis],[r.PcIn + pn, r.hDis],[r.Pco + pn, r.hCo],[r.Pco + pn - 0.15*dPll, r.hCo],[r.Pmi + pn, r.hCo],[r.PeIn, r.hEi],[r.PeOut, r.hEo],[r.PeOut - dVL, r.hEo],[r.Ps, r.h1]];
+  else st = [[r.Pd, r.hDis],[r.PeOut, r.hEo],[r.PeIn, r.hEi],[r.Pmi + pn + 0.15*dPll, r.hCo],[r.Pco + pn - 0.8*dPll, r.hCo],[r.Pco + pn, r.hCo],[r.PcIn + pn, r.hDis],[r.Pd - 0.3*Math.max(0,dVL), r.hDis],[r.Ps, r.h1]];
   return st.map(([P,h], i) => { const s = F_.state(P, h); return {i: i+1, name: PORTNAMES[heat?'heat':'cool'][i], P, h, ...s}; });
 }
 
@@ -1086,11 +1123,13 @@ function buildVM(r){
   const highP = heat ? pts[7].P : pts[3].P;         // high-side gauge port
   const Tsuc = heat ? pts[8].T : pts[7].T;
   const Tliq = pts[3].T, Pliq = pts[3].P;            // liquid line service valve, both modes
+  const indoorHeat = heat ? a.Qc : -a.Qe;             // heat added to the indoor side
+  const Qwant = cfg.mode === 'heat' ? indoorHeat : -indoorHeat;
   const v = {
     lowP, highP, Tsuc, Tliq, Tdis: r.disSt.T, Pd: r.Pd, Ps: r.Ps,
     SH: Tsuc - F_.tDew(lowP), SC: F_.tBub(Pliq) - Tliq,
-    SHevap: r.ze, amps: e.comp.A, Q: heat ? a.Qc : a.Qe, kw: e.totalW / 1000,
-    COP: (heat ? a.Qc : a.Qe) / (e.totalW * 3.412), m: r.m,
+    SHevap: r.ze, amps: e.comp.A, Q: Qwant, kw: e.totalW / 1000,
+    COP: Qwant / (e.totalW * 3.412), m: r.m,
     supply: a.indoor.kind === 'air' ? a.indoor.out.db : a.indoor.tout,
     lwtId: a.indoor.kind === 'water' ? a.indoor.tout : NaN, lwtOd: a.outdoor.kind === 'water' ? a.outdoor.tout : NaN,
   };
@@ -1111,7 +1150,7 @@ function offVM(){
 const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, tRun: 999, t: 0, speed: 1 };
 let disp = null, logRows = [];
 function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60); logRows.unshift({t: `${m}:${String(s).padStart(2,'0')}`, msg, kind}); if (logRows.length > 60) logRows.pop(); renderLog(); }
-function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
+function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k === 'Tdis') return 120; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
 function trip(kind, why){ S.comp = false; S.trip = kind; S.tripWhy = why; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
   if (S.trips >= cfg.sw.maxTrips) { S.lock = true; logEvent(`Control LOCKOUT after ${S.trips} trips. Find the cause, then press Reset control.`, 'bad'); } }
 function tick(dtReal){
@@ -1135,6 +1174,11 @@ function tick(dtReal){
     else if (sw.fzOn !== false && odW() && disp.lwtOd <= sw.fzOd) { S.tripSide = 'od'; trip('FRZ', `${roleOf('od').toLowerCase()} leaving ${E.WFLUID[cfg.water.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtOd)}°F (cut-out ${sw.fzOd}°F)`); }
   }
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
+  if (S.comp && res.ctx.compRev) {        // scroll turning backward: no pumping, low amps, hot shell
+    const o = offVM(); o.amps = elecRes.comp.A; o.kw = elecRes.totalW / 1000; o.Tdis = (odW() ? cfg.water.ewt : cfg.cond.odDB) + 230; o.COP = 0; tgt = o;
+  }
+  const hunt = S.comp && res.ctx.txvFault === 'hunting' && (res.ctx.heat ? cfg.outdoor : cfg.indoor).meter === 'txv';
+  if (hunt) { const w = Math.sin(2 * Math.PI * S.t / 50); tgt.lowP += 14 * w; tgt.Ps += 14 * w; tgt.P8 += 14 * w; tgt.P9 += 14 * w; tgt.SH -= 14 * w; tgt.Tsuc -= 9 * w; tgt.T7 -= 9 * w; tgt.T8 -= 9 * w; tgt.T9 -= 9 * w; tgt.amps += 0.5 * w; }
   if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
   if (S.comp && res.collapse) { tgt.Ps = Math.max(F().Pmin, PATM + sw.lpsOpen - 10); tgt.lowP = tgt.Ps + 1; tgt.P9 = tgt.Ps; }
   for (const k in tgt) {
@@ -1149,9 +1193,9 @@ function tick(dtReal){
 /* ---------- tiles ---------- */
 const TILES = [
   {k:'lowP', l:'Low side', c:'var(--suct)', v: d => fmtPv(d.lowP), s: d => `sat ${f1(F().tDew(d.lowP))}°F dew`, dd: 'lowP', unitDelta: 'psi'},
-  {k:'SH', l:'SH', c:'var(--suct)', v: d => S.comp ? [f1(d.SH),'°F'] : ['—',''], s: d => `suction ${f1(d.Tsuc)}°F`, dd: 'SH', unitDelta:'°'},
+  {k:'SH', l:'SH', c:'var(--suct)', v: d => S.comp && isFinite(d.SH) ? [f1(d.SH),'°F'] : ['—',''], s: d => `suction ${f1(d.Tsuc)}°F`, dd: 'SH', unitDelta:'°'},
   {k:'highP', l:'High side', c:'var(--hot)', v: d => fmtPv(d.highP), s: d => `sat ${f1(F().tBub(d.highP))}°F bub`, dd:'highP', unitDelta:'psi'},
-  {k:'SC', l:'SC', c:'var(--liq)', v: d => S.comp ? [f1(d.SC),'°F'] : ['—',''], s: d => `liquid ${f1(d.Tliq)}°F`, dd:'SC', unitDelta:'°'},
+  {k:'SC', l:'SC', c:'var(--liq)', v: d => S.comp && isFinite(d.SC) ? [f1(d.SC),'°F'] : ['—',''], s: d => `liquid ${f1(d.Tliq)}°F`, dd:'SC', unitDelta:'°'},
   {k:'Tdis', l:'Dis. temp', c:'var(--hot)', v: d => [f0(d.Tdis),'°F'], s: d => d.Tdis > 250 ? 'too hot' : d.Tdis > 225 ? 'running hot' : 'line temp', dd:'Tdis', unitDelta:'°'},
   {k:'amps', l:'Amps', c:'var(--accent)', v: d => [f1(d.amps),'A'], s: d => `RLA ${cfg.matched.RLA}`, dd:'amps', unitDelta:'A'},
   {k:'Q', l: () => cfg.mode === 'heat' ? 'Heating' : 'Cooling', c:'var(--good)', v: d => [(d.Q/1000).toFixed(1),'kBtu/h'], s: d => `${(d.Q/12000).toFixed(2)} tons`, dd:'Q', unitDelta:'k', scale: 1/1000},
@@ -1293,7 +1337,7 @@ function drawHX(side, type){
   $(side + 'Over').innerHTML = o;
 }
 function renderSchemStatic(){
-  const heat = cfg.mode === 'heat', on = S.comp, r = res;
+  const heat = res.ctx.heat, on = S.comp, r = res;
   for (const k in SEG) {
     const sg = SEG[k];
     let col = on ? COL[heat ? sg.heat : sg.cool] : COL.off;
@@ -1333,7 +1377,7 @@ function renderSchemStatic(){
   markSel();
 }
 function updateSchemLive(){
-  const a = res.air, heat = cfg.mode === 'heat', on = S.comp;
+  const a = res.air, heat = res.ctx.heat, on = S.comp;
   const odA = a.outdoor, idA = a.indoor;
   const io = (k, tin, tout) => on ? `${k} in ${f1(tin)}°F → out ${f1(tout)}°F` : `${k} in ${f1(tin)}°F`;
   $('odAir').textContent = odW() ? io('Water', odA.tin, odA.tout) : io('Air', odA.in.db, odA.out.db);
@@ -1347,7 +1391,7 @@ function kv(rows){ return '<div class="kv">' + rows.filter(Boolean).map(([k,v]) 
 function stateDesc(p){ if (p.phase === 'vap') return `vapor, ${p.sh.toFixed(1)}°F superheat`; if (p.phase === 'liq') return `liquid, ${p.sc.toFixed(1)}°F subcooled`; return `mixture, ${(p.x*100).toFixed(0)}% vapor`; }
 function renderProbe(){
   if (!selected) selected = {kind:'part', id:'comp'};
-  const el = $('probe'), r = res, heat = cfg.mode === 'heat', on = S.comp, F_ = F(), e = elecRes;
+  const el = $('probe'), r = res, heat = res.ctx.heat, on = S.comp, F_ = F(), e = elecRes;
   let h = '';
   if (selected.kind === 'tp') {
     const p = r.points[selected.id - 1];
@@ -1362,7 +1406,7 @@ function renderProbe(){
     if (id === 'comp') {
       const c = e.comp;
       h = `<h3>Compressor · ${c.type === 'inv' ? 'inverter scroll' : c.type === 'two' ? 'two-stage scroll' : 'single-speed scroll'}</h3>` + kv([
-        ['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A'], c.type !== 'inv' && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
+        ...(c.three && c.type !== 'inv' ? [['L1 amps', on ? f1(disp.amps) + ' A' : '0 A'], ['L2 amps', on ? f1(disp.amps * 1.01) + ' A' : '0 A'], ['L3 amps', on ? f1(disp.amps * 0.99) + ' A' : '0 A']] : [['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A']]), c.type !== 'inv' && !c.three && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && !c.three && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
         ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`],
         c.type === 'inv' && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
         ['Suction', fmtP(disp.Ps)], ['Discharge', fmtP(disp.Pd)], ['Compression ratio', on ? (r.PR).toFixed(2) : '—'],
@@ -1401,7 +1445,7 @@ function renderProbe(){
         ['Refrigerant h in', on ? rh[0].toFixed(1) + ' Btu/lb' : '—'],
         ['Refrigerant h out', on ? rh[1].toFixed(1) + ' Btu/lb' : '—'],
         ['Refrigerant Δh', on ? Math.abs(rh[0] - rh[1]).toFixed(1) + ' Btu/lb' : '—'],
-        ['Refrigerant flow', on ? f0(r.m) + ' lb/h' : '—'],
+        ['Refrigerant flow', on ? f0(r.mr) + ' lb/h' : '—'],
         role === 'evap' && A.kind === 'air' && ['Coil surface', r.wetCoil ? 'wet' : 'dry'],
         role === 'evap' && A.kind === 'air' && ['Moisture removed', on ? f1(Math.max(0,(A.in.W - A.out.W))*7000) + ' gr/lb' : '—'],
         ['Refrigerant ΔP', on ? f1(role === 'cond' ? r.PcIn - r.Pco : r.PeIn - r.PeOut) + ' psi' : '—'],
@@ -1414,14 +1458,14 @@ function renderProbe(){
       if (!active) h += `<p class="hint">Bypassed in ${heat ? 'heating' : 'cooling'} — refrigerant flows backward through the check valve.</p>`;
       else h += kv([
         ['Inlet', fmtP(r.Pmi)], ['Inlet liquid', r.upSt.phase === 'liq' ? r.upSt.sc.toFixed(1) + '°F subcooled' : 'FLASH GAS ' + (r.upSt.x*100).toFixed(0) + '%'],
-        ['Outlet', fmtP(r.PeIn)], ['Pressure drop', f0(r.Pmi - r.PeIn) + ' psi'], ['Flow', f0(r.m) + ' lb/h'],
-        M.meter !== 'piston' && ['Valve opening', r.open == null ? '—' : Math.round(Math.min(1, Math.max(0, r.open)) * 100) + '%'],
+        ['Outlet', fmtP(r.PeIn)], ['Pressure drop', f0(r.Pmi - r.PeIn) + ' psi'], ['Flow', f0(r.mr) + ' lb/h'],
+        M.meter !== 'piston' && !cfg.faultsHidden && ['Valve opening', r.open == null ? '—' : Math.round(Math.min(1, Math.max(0, r.open)) * 100) + '%'],
         M.meter === 'txv' && ['Static SH setting', M.txvSet + '°F'], M.meter === 'eev' && ['Target SH', M.eevSH + '°F'],
         M.meter === 'piston' && ['Bore', ((M.piston || K.piston)).toFixed(3) + ' in'],
         ['Flash after valve', (r.eiSt.x*100).toFixed(0) + '% vapor'],
       ]);
     } else if (id === 'rv') {
-      h = `<h3>Reversing valve</h3><p class="hint">${heat ? 'Heating position: hot gas goes up the vapor line to the indoor coil, and the outdoor coil returns suction gas.' : 'Cooling position: hot gas goes to the outdoor coil, and the vapor line returns suction gas from the indoor coil.'} Brands differ on which mode energizes the solenoid (O vs B terminal).</p>` + kv([['Discharge side', fmtP(disp.Pd)], ['Suction side', fmtP(disp.Ps)]]);
+      h = `<h3>Reversing valve</h3><p class="hint">The thermostat is calling for ${cfg.mode === 'heat' ? 'heating, so the control has shifted the valve to send hot gas up the vapor line to the indoor coil' : 'cooling, so the control has shifted the valve to send hot gas to the outdoor coil'}. Check line temperatures to confirm where the hot gas actually goes. Brands differ on which mode energizes the solenoid (O vs B terminal).</p>` + kv([['Discharge side', fmtP(disp.Pd)], ['Suction side', fmtP(disp.Ps)]]);
     } else if (id === 'acc') {
       h = `<h3>Suction accumulator</h3><p class="hint">Catches liquid that leaves the evaporator so it can't slug the compressor.</p>` + kv([['Evaporator exit', on ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F SH' : `${(r.xEo*100).toFixed(0)}% vapor`) : '—'], ['Holding liquid', on && r.ze < 0 ? 'YES' : 'no']]);
     }
@@ -1432,7 +1476,7 @@ let probeOpen = false;
 
 /* ---------- alerts ---------- */
 function renderAlerts(){
-  const r = res, A = [], heat = cfg.mode === 'heat', sw = cfg.sw, a = r.air;
+  const r = res, A = [], heat = res.ctx.heat, sw = cfg.sw, a = r.air;
   // when stopped, say why
   if (!S.comp) {
     if (S.lock) A.push(['bad', `Locked out after ${S.trips} trips. Last: ${S.tripWhy || '—'}. Fix the cause, then press Reset control.`]);
@@ -1446,9 +1490,10 @@ function renderAlerts(){
     $('alerts').innerHTML = A.map(([k,t]) => `<div class="alert ${k==='bad'?'bad':k==='info'?'info':''}">${esc(t)}</div>`).join('');
     return;
   }
+  if (r.ctx.compRev) { $('alerts').innerHTML = ''; return; }
   if (r.beyond) A.push(['bad', `Head pressure is climbing past ${sw.hpsOpen} psig — the high-pressure switch will open.`]);
   else if (r.collapse) A.push(['bad', `The evaporator is starved — suction is falling toward the ${sw.lpsOpen} psig low-pressure cut-out.`]);
-  else if (!r.converged) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
+  else if (!r.converged && !r.ctx.compRev) A.push(['bad', 'This combination has no stable operating point. Treat readings as approximate.']);
   if (g(r.Ps) < 0) A.push(['bad', `Suction is in a vacuum (${fmtP(r.Ps)}).`]);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves it ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback to the compressor.`]);
@@ -1577,7 +1622,20 @@ function buildControls(){
     `<div class="note" id="fzNote"></div>` +
     `<button class="btn" id="swDefault">Restore default switch settings</button>`);
   h += grp('Electrical supply',
-    num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v));
+    sel('supply','Power supply', [['1-230','Single-phase 208/230 V'],['3-230','Three-phase 208/230 V'],['3-460','Three-phase 460 V']], () => `${cfg.elec.phase}-${cfg.elec.nomV}`, v => { const [ph, nv] = v.split('-').map(Number); cfg.elec.phase = ph; cfg.elec.nomV = nv; cfg.elec.volts = nv; if (ph === 1) { cfg.faults.compRev = false; cfg.faults.odFanRev = false; cfg.faults.blowerRev = false; } }) +
+    num('volts','Line voltage','V',150,560,1, () => cfg.elec.volts, v => cfg.elec.volts = v, {minmax: () => [Math.round(cfg.elec.nomV * 0.8), Math.round(cfg.elec.nomV * 1.15)]}));
+  const FH = () => cfg.faultsHidden, three = () => cfg.elec.phase === 3;
+  const TXVF = [['','Working normally'],['stuckOpen','Stuck open'],['stuckPartial','Stuck partly closed'],['lostCharge','Lost bulb charge (fails closed)'],['looseBulb','Loose / uninsulated bulb'],['hunting','Hunting']];
+  const WIRE = [['','Correct rotation'],['rev','Out of phase (runs backward)']];
+  h += grp('Issues (faults)',
+    `<div class="note" id="faultNote"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="faultHide"></button><button class="btn" id="faultClear">Clear all issues</button></div>` +
+    num('fNc','Non-condensables (air in system)','%',0,100,5, () => Math.round((cfg.faults.nc || 0) * 100), v => cfg.faults.nc = v / 100, {secret: true, hide: FH}) +
+    sel('fIdTxv','Indoor TXV condition', TXVF, () => cfg.faults.idTxv || '', v => cfg.faults.idTxv = v, {secret: true, hide: () => FH() || cfg.indoor.meter !== 'txv'}) +
+    sel('fOdTxv','Outdoor TXV condition', TXVF, () => cfg.faults.odTxv || '', v => cfg.faults.odTxv = v, {secret: true, hide: () => FH() || cfg.outdoor.meter !== 'txv'}) +
+    sel('fRv','Reversing valve condition', [['','Working normally'],['stuckCool','Stuck in cooling position'],['stuckHeat','Stuck in heating position'],['leakSmall','Leaking internally (small)'],['leakLarge','Leaking internally (large)']], () => cfg.faults.rv || '', v => cfg.faults.rv = v, {secret: true, hide: FH}) +
+    sel('fComp','Compressor wiring', WIRE, () => cfg.faults.compRev ? 'rev' : '', v => cfg.faults.compRev = v === 'rev', {secret: true, hide: () => FH() || !three() || cfg.comp.type === 'inv'}) +
+    sel('fOdFan','Outdoor fan wiring', WIRE, () => cfg.faults.odFanRev ? 'rev' : '', v => cfg.faults.odFanRev = v === 'rev', {secret: true, hide: () => FH() || !three() || odW()}) +
+    sel('fBlower','Blower wiring', WIRE, () => cfg.faults.blowerRev ? 'rev' : '', v => cfg.faults.blowerRev = v === 'rev', {secret: true, hide: () => FH() || !three() || idW()}));
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
   $('tab-controls').innerHTML = h;
   // test points
@@ -1597,8 +1655,10 @@ function buildControls(){
     const c = CTL.find(x => x.id === b.dataset.step); applyCtl(c, +(c.get()) + (+b.dataset.dir) * c.step);
   }));
   $('rematchBtn').addEventListener('click', () => change('Re-matched: factory charge ' + (rematch('System re-matched to factory charge and metering.'), cfg.charge) + ' lb', true));
+  $('faultHide').addEventListener('click', () => { cfg.faultsHidden = !cfg.faultsHidden; save(); syncControls(); renderProbe(); logEvent(cfg.faultsHidden ? 'Issue settings hidden.' : 'Issue settings shown.'); });
+  $('faultClear').addEventListener('click', () => { cfg.faults = {}; change('All issues cleared'); });
   $('swDefault').addEventListener('click', () => { cfg.sw = E.defaultSwitches(F()); ensureFz(); change('Switch settings restored to defaults'); });
-  $('resetAll').addEventListener('click', () => { cfg = defaults(); rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
+  $('resetAll').addEventListener('click', () => { cfg = defaults(); cfg.faultsHidden = false; rematch('Started over with factory defaults.'); S.trip = null; S.lock = false; S.trips = 0; S.asc = 0; S.comp = true; S.call = true; S.tRun = 999; change('Factory defaults restored', true); });
   syncControls();
 }
 function testSets(){ return unitTestSets(idW(), odW(), cfg.tons).map(k => [k, TESTSETS[k]]); }
@@ -1653,6 +1713,7 @@ function applyCtl(c, v){
   const before = c.get();
   c.set(v);
   if (String(before) === String(c.get())) { syncControls(); return; }
+  if (c.secret) { change('An issue setting was changed'); return; }
   const unit = c.unit ? ' ' + c.unit : '';
   const show = x => typeof x === 'number' ? (+x.toFixed(c.dec ?? 2)).toString() : x;
   change(`${LBL(c.label)}: ${show(before)} → ${show(c.get())}${unit}`, c.id === 'refr' || c.id === 'tons');
@@ -1673,6 +1734,7 @@ function syncControls(){
   const llAdj = (cfg.lineLen - 25) * 0.6 / 16;
   $('chargeNote').innerHTML = `Factory charge ${m.charge} lb (for 25 ft). ` + (cfg.lineLen !== 25 ? `For ${cfg.lineLen} ft the installer would ${llAdj > 0 ? 'add' : 'remove'} about ${Math.abs(llAdj).toFixed(2)} lb (0.6 oz/ft of 3/8" liquid line). ` : '') +
     (cfg.chargeMode === 'sandbox' && res ? `<br>This target needs <b>${res.inv.toFixed(2)} lb</b> in the system right now.` : `Charge is now ${(cfg.charge - m.charge >= 0 ? '+' : '')}${(cfg.charge - m.charge).toFixed(2)} lb vs factory.`);
+  const fh = $('faultHide'); if (fh) { fh.textContent = cfg.faultsHidden ? 'Show issues (instructor)' : 'Hide issues from trainees'; $('faultClear').style.display = cfg.faultsHidden ? 'none' : ''; $('faultNote').textContent = cfg.faultsHidden ? 'Issue settings are hidden. Diagnose the system from the gauges, temperatures and amps.' : 'Set one or more faults, then hide them before handing the simulator to a trainee. Changes here are not detailed in the log.' + (cfg.elec.phase === 3 ? '' : ' Out-of-phase wiring needs a three-phase supply (Electrical supply).'); }
   const fn = $('fzNote'); if (fn) fn.textContent = (idW() || odW()) ? `Freeze protection stops the compressor when a water loop's leaving fluid falls to the cut-out, and resets 10°F above it. Typical cut-out: 38°F for water, about 8°F above the freeze point for glycol (${E.WFLUID[cfg.water.fluid||'water'].name}: ${fzDefault(cfg.water.fluid)}°F).` : '';
   const an = $('airNote'); if (an) an.textContent = idW() && odW() ? 'No air side on this unit — both heat exchangers are water-to-refrigerant.' : idW() ? 'Indoor side is a water loop, so there is no blower. Outdoor fan airflow still applies.' : 'PSC blowers lose airflow as static pressure rises (dirty filter, closed registers). ECM blowers hold airflow until they run out of torque near 0.9 in.';
   renderPresets();
@@ -1680,7 +1742,7 @@ function syncControls(){
 
 /* ---------- readings & electrical & P-h ---------- */
 function renderReadings(){
-  const r = res, a = r.air, heat = cfg.mode === 'heat', on = S.comp;
+  const r = res, a = r.air, heat = res.ctx.heat, on = S.comp && !res.ctx.compRev;
   const short = PORTSHORT[heat ? 'heat' : 'cool'];
   let h = '<h2>Refrigerant ports</h2><div class="tw"><table class="ports"><tr><th>Port</th><th>Pressure</th><th>°F</th><th>Sat °F</th><th>State</th><th>Enthalpy, Btu/lb</th></tr>';
   for (const p of r.points) {
@@ -1708,7 +1770,7 @@ function renderReadings(){
     ['Entering', f1(IA.tin) + '°F'], ['Leaving', on ? f1(IA.tout) + '°F' : '—'], ['ΔT', on ? f1(Math.abs(IA.tout - IA.tin)) + '°F' : '—'],
     ['Capacity', on ? f0(airQ) + ' Btu/h' : '—'],
   ]) + '<p class="hint">Capacity = gpm × 500 × specific heat × specific gravity × ΔT.</p>') + '<h2 style="margin-top:14px">Refrigerant-enthalpy method (indoor coil)</h2>' + kv([
-    ['Refrigerant flow', on ? f0(r.m) + ' lb/h' : '—'],
+    ['Refrigerant flow', on ? f0(r.mr) + ' lb/h' : '—'],
     ['Enthalpy in', on ? rh[0].toFixed(1) + ' Btu/lb' : '—'], ['Enthalpy out', on ? rh[1].toFixed(1) + ' Btu/lb' : '—'],
     ['Δh', on ? Math.abs(rh[0] - rh[1]).toFixed(1) + ' Btu/lb' : '—'],
     ['Capacity', on ? f0(Qref) + ' Btu/h' : '—'],
@@ -1730,8 +1792,8 @@ function renderReadings(){
 function renderElec(){
   const e = elecRes, on = S.comp, c = e.comp, bOn = S.call && cfg.blowerOn;
   let h = `<h2>Outdoor unit</h2>` + kv([
-    ['Line voltage L1–L2', f0(e.V) + ' V'], ['Unit total', on ? f1(e.odUnitA) + ' A' : '0.0 A'],
-    ['Compressor common (C)', on ? f1(c.A) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor run winding (R)', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && ['Compressor start winding (S)', on ? f1(c.S) + ' A' : '0.0 A'],
+    ['Supply', cfg.elec.phase === 3 ? `three-phase ${cfg.elec.nomV} V` : 'single-phase 230 V'], ['Line voltage L1–L2', f0(e.V) + ' V'], ['Unit total', on ? f1(e.odUnitA) + ' A' : '0.0 A'],
+    ...(c.three && c.type !== 'inv' ? [['Compressor L1', on ? f1(disp.amps) + ' A' : '0.0 A'], ['Compressor L2', on ? f1(disp.amps * 1.01) + ' A' : '0.0 A'], ['Compressor L3', on ? f1(disp.amps * 0.99) + ' A' : '0.0 A']] : [['Compressor common (C)', on ? f1(disp.amps) + ' A' : '0.0 A']]), c.type !== 'inv' && !c.three && ['Compressor run winding (R)', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && !c.three && ['Compressor start winding (S)', on ? f1(c.S) + ' A' : '0.0 A'],
     ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], c.type === 'inv' && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
     !odW() && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
   ]);
@@ -1780,9 +1842,9 @@ function drawPH(){
   x.fillStyle = col('--muted'); x.font = '11px Barlow, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'bottom';
   const mid = Math.sqrt(Pmin * F_.Pmax) * 0.6; x.fillText('liquid', X(F_.hBub(mid)) - 26, Y(mid)); x.fillText('mixture', (X(F_.hBub(mid)) + X(F_.hDew(mid))) / 2, Y(mid)); x.fillText('vapor', X(F_.hDew(mid)) + 28, Y(mid));
   x.restore();
-  if (!S.comp) { x.fillStyle = col('--muted'); x.font = '13px Barlow, sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText('Compressor off — no cycle to draw.', L + 16, T + 20); return; }
+  if (!S.comp || res.ctx.compRev) { x.fillStyle = col('--muted'); x.font = '13px Barlow, sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText(S.comp ? 'No refrigerant is circulating — no cycle to draw.' : 'Compressor off — no cycle to draw.', L + 16, T + 20); return; }
   // cycle
-  const p = res.points, heat = cfg.mode === 'heat';
+  const p = res.points, heat = res.ctx.heat;
   const order = heat ? [9,1,8,7,6,5,4,3,2,9] : [9,1,2,3,4,5,6,7,8,9];
   x.lineWidth = 2.5; x.strokeStyle = col('--accent'); x.beginPath();
   order.forEach((n,i) => { const q = p[n-1], xx = X(q.h), y = Y(q.P); i ? x.lineTo(xx, y) : x.moveTo(xx, y); }); x.stroke();
@@ -1864,6 +1926,8 @@ document.addEventListener('scroll', () => tipEl.style.display = 'none', true);
 if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
 if (cfg.sw && cfg.sw.asc === 300) cfg.sw.asc = 30;   // older saved default
 if (!cfg.water.fluid) cfg.water.fluid = 'water';
+if (!cfg.elec.phase) { cfg.elec.phase = 1; cfg.elec.nomV = 230; }
+if (!cfg.faults) cfg.faults = {};
 ensureFz();
 for (const m of ['cool','heat']) if (cfg.savedCond[m].idEwt == null) cfg.savedCond[m].idEwt = m === 'cool' ? 54 : 104;
 $('mCool').classList.toggle('on', cfg.mode === 'cool'); $('mHeat').classList.toggle('on', cfg.mode === 'heat');
@@ -1871,7 +1935,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.3.0 started at steady state.');
+logEvent('Simulator v1.4.0 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {

@@ -17,6 +17,8 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - Water loops on either side, named by role (condenser or evaporator), with adjustable flow, entering temperature and fluid (water, propylene or ethylene glycol 20/30/40%), freeze protection cut-outs and freeze-point warnings
 - ECM or PSC blower with duct static
 - Standard test points chosen to match the unit: AHRI 210/240 or 340/360 (air-source), ISO 13256-1 (water-to-air), ISO 13256-2 and AHRI 550/590 water-cooled (water-to-water), AHRI 550/590 air-cooled (air-to-water); includes break-in, rating, part-load and maximum/low-temperature operating points
+- Issues (faults) an instructor can set and hide: non-condensables, TXV stuck open / stuck partly closed / lost bulb charge / loose bulb / hunting (indoor and outdoor valves), reversing valve stuck in either position or leaking internally, and out-of-phase compressor, outdoor fan and blower on three-phase supply
+- Single-phase or three-phase power supply
 - High/low pressure switches with trips, anti-short-cycle and lockout
 - Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart

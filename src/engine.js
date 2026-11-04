@@ -125,23 +125,28 @@ function defaultSwitches(F) {
 
 /* ---------------- Context builder ---------------- */
 function buildCtx(cfg, FL) {
-  const F = FL[cfg.refrigerant], tons = cfg.tons, heat = cfg.mode === 'heat';
+  const fx = cfg.faults || {};
+  // the reversing valve decides the refrigerant flow; a stuck valve ignores the thermostat
+  const F = FL[cfg.refrigerant], tons = cfg.tons, heat = fx.rv === 'stuckCool' ? false : fx.rv === 'stuckHeat' ? true : cfg.mode === 'heat';
   const idC = COIL[cfg.indoor.type], odC = COIL[cfg.outdoor.type];
   const idW = isWater(cfg.indoor.type), water = isWater(cfg.outdoor.type);
+  const three = cfg.elec.phase === 3;
   const L = cfg.lineLen, ids = lineIDs(tons);
   const fouling = cfg.faults || {};
   // indoor airflow
   const idCfmNom = (idC.cfmId || 400) * tons;
-  let idCfm = 0;
+  let idCfm = 0, idCfmCmd = 0;
   if (!idW) {
     const esp = cfg.blower.esp;
     if (cfg.blower.type === 'ecm') { const maxEsp = 0.9; idCfm = cfg.blower.cfm * (esp <= maxEsp ? 1 : Math.max(0.3, 1 - 0.9 * (esp - maxEsp))); }
     else idCfm = cfg.blower.cfm * Math.max(0.3, 1 - 0.42 * (esp - 0.5));
     idCfm *= fouling.idAirflow ?? 1;
+    idCfmCmd = idCfm;
+    if (three && fx.blowerRev) idCfm *= 0.45;                   // centrifugal wheel turning backward
     idCfm = Math.max(idCfm, 0.04 * idCfmNom);                 // leakage/natural draft floor
   }
   const odCfmNom = (odC.cfmOd || 900) * tons;
-  const odCfm = water ? 0 : Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (fouling.odAirflow ?? 1));
+  const odCfm = water ? 0 : Math.max(0.04 * odCfmNom, odCfmNom * cfg.odFan.pct / 100 * (fouling.odAirflow ?? 1) * (three && fx.odFanRev ? 0.3 : 1));
   const air = (db, wb, cfm) => { const W = Psy.W_DBWB(db, Math.min(wb, db)), v = Psy.v(db, W), ma = cfm * 60 / v; return { kind: 'air', T: db, W, h: Psy.h(db, W), ma, C: ma * (0.240 + 0.444 * W), cfm }; };
   const loop = w => { const fl = WFLUID[w.fluid || 'water'], gpm = Math.max(0.1 * tons, w.gpm); const C = gpm * 500 * fl.cp * fl.sg; return { kind: 'water', T: w.ewt, C, ma: C, gpm, fluid: fl, fluidKey: w.fluid || 'water' }; };
   const idStream = idW ? loop(cfg.idWater) : air(cfg.cond.idDB, cfg.cond.idWB, idCfm);
@@ -149,15 +154,16 @@ function buildCtx(cfg, FL) {
   // coil UA (scales with stream capacity rate; glycol lowers film coefficient)
   const sz = s => s / 100, gpmNom = 3 * tons;
   const idNomC = idW ? gpmNom * 500 : idCfmNom * 60 / 13.5 * 0.244, odNomC = water ? gpmNom * 500 : odCfmNom * 60 / 13.7 * 0.242;
-  const idUA = (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, idW ? 0.6 : 0.5) * (idW ? idStream.fluid.ua : 1) * (fouling.idUA ?? 1);
-  const odUA = (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (water ? odStream.fluid.ua : 1) * (fouling.odUA ?? 1);
+  const ncUA = 1 - 0.35 * (fx.nc || 0);   // air blankets part of the condenser
+  const idUA = (heat ? ncUA : 1) * (heat ? idC.NTUcId : idC.NTUe) * idNomC * sz(cfg.indoor.size) * Math.pow(idStream.C / idNomC, idW ? 0.6 : 0.5) * (idW ? idStream.fluid.ua : 1) * (fouling.idUA ?? 1);
+  const odUA = (heat ? 1 : ncUA) * (heat ? odC.NTUeOd : odC.NTUc) * odNomC * sz(cfg.outdoor.size) * Math.pow(odStream.C / odNomC, water ? 0.6 : 0.5) * (water ? odStream.fluid.ua : 1) * (fouling.odUA ?? 1);
   const idVol = (heat ? idC.volC : idC.volE) * tons * sz(cfg.indoor.size);
   const odVol = (heat ? odC.volE : odC.volC) * tons * sz(cfg.outdoor.size);
   const ctx = {
     F, cfg, tons, heat, water, idWater: idW, ids,
     evap: heat ? { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpE, name: 'outdoor' } : { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpE, name: 'indoor' },
     cond: heat ? { stream: idStream, UA: idUA, vol: idVol, dp: idC.dpC * 0.8, name: 'indoor' } : { stream: odStream, UA: odUA, vol: odVol, dp: odC.dpC, name: 'outdoor' },
-    idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom,
+    idStream, odStream, idCfm, odCfm, idCfmNom, odCfmNom, idCfmCmd, odCfmCmd: water ? 0 : odCfmNom * cfg.odFan.pct / 100,
     Vll: area(ids.liq) * L, Vvl: area(ids.vap) * L,
     Vcomp: cfg.matched.Vcomp || 0, VcompH: cfg.matched.VcompH || 0, Vshell: 0.04 * tons, Vdl: 0.006 * tons, Vacc: 0.035 * tons, oil: 0.12 * tons,
     mNom: cfg.matched.mNom, rhoSucNom: cfg.matched.rhoSucNom,
@@ -166,7 +172,11 @@ function buildCtx(cfg, FL) {
   const c = cfg.comp; let spd = 1;
   if (c.type === 'two') spd = c.stage === 'low' ? 0.67 : 1;
   else if (c.type === 'inv') spd = c.speed / 100;
-  ctx.speed = spd * (fouling.compSpeed ?? 1);
+  ctx.compRev = three && !!fx.compRev;
+  ctx.speed = spd * (fouling.compSpeed ?? 1) * (ctx.compRev ? 0.03 : 1);
+  ctx.rvLeak = fx.rv === 'leakSmall' ? 0.08 : fx.rv === 'leakLarge' ? 0.2 : 0;
+  ctx.pnc = 75 * (fx.nc || 0);                                  // psi of air partial pressure in the condenser
+  ctx.txvFault = heat ? fx.odTxv : fx.idTxv;
   ctx.meter = heat ? cfg.outdoor : cfg.indoor;
   ctx.meterK = heat ? cfg.matched.out : cfg.matched.in;
   return ctx;
@@ -196,62 +206,68 @@ function cycle(ctx, x, detail) {
   let xEo = we >= 0 ? 1 : clamp(1 + we / 100, 0.3, 1);
   const kv = 2.5 * (cfg.lineLen / 25) * rN / (mN * mN), kRV = 1.5 * rN / (mN * mN), kAcc = 1.0 * rN / (mN * mN);
   const sucRestr = (cfg.faults?.suctionRestr ?? 0) * 8 * kv;
-  let m = mN, Ps = PeOut, rhoS = 1, shS = 0, wet = false, hEo = hdE, SH = 0, dPs = 0, Pd = PcIn, PR = 2, etaV = 0.9, dPd = 0;
-  for (let k = 0; k < 6; k++) {
-    if (we > 0) {
-      const Ca = fsh * es.C, Cr = m * cpv, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
-      const eps = effCF(fsh * ctx.evap.UA / Cmin, Cmin / Cmax);
-      hEo = hdE + eps * Cmin * Math.max(0, es.T - Te) / m;
-    } else hEo = hbE + xEo * (hdE - hbE);
-    const rhoEo = F.state(PeOut, hEo).rho;
-    dPs = ((ctx.heat ? 0 : kv) + kRV + kAcc + sucRestr) * m * m / rhoEo;
-    Ps = Math.max(F.Pmin * 1.01, PeOut - dPs);
-    const st = F.state(Ps, hEo);
-    wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
-    dPd = (ctx.heat ? kv * m * m / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (m / mN) ** 2;
-    Pd = PcIn + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
-    etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
-    m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
+  // faults: hot-gas bypass through a leaking reversing valve, reversed (out-of-phase) compressor, non-condensables
+  const fl = ctx.rvLeak || 0, pnc = ctx.pnc || 0;
+  let m = mN, mr = mN, Ps = PeOut, rhoS = 1, shS = 0, wet = false, hEo = hdE, SH = 0, dPs = 0, Pd = PcIn, PR = 2, etaV = 0.9, dPd = 0;
+  let h1 = hdE, hDis = hdE + 20, Wel = 0, etaIs = 0.7, h2s = hdE, hsucEff = hdE, shSuc = 0;
+  for (let outer = 0; outer < (fl > 0 ? 5 : 1); outer++) {
+    for (let k = 0; k < 6; k++) {
+      if (we > 0) {
+        const Ca = fsh * es.C, Cr = mr * cpv, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
+        const eps = effCF(fsh * ctx.evap.UA / Cmin, Cmin / Cmax);
+        hEo = hdE + eps * Cmin * Math.max(0, es.T - Te) / mr;
+      } else hEo = hbE + xEo * (hdE - hbE);
+      h1 = (1 - fl) * hEo + fl * hDis;                      // leak mixes hot gas into the suction
+      const rhoEo = F.state(PeOut, hEo).rho;
+      dPs = ((ctx.heat ? 0 : kv) + kRV + kAcc + sucRestr) * mr * mr / rhoEo;
+      Ps = Math.max(F.Pmin * 1.01, PeOut - dPs);
+      const st = F.state(Ps, h1);
+      wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
+      dPd = (ctx.heat ? kv * mr * mr / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (mr / mN) ** 2;
+      Pd = PcIn + pnc + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
+      etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
+      m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
+      mr = Math.max(1, m * (1 - fl));
+    }
+    shSuc = wet ? 0 : shS;
+    hsucEff = wet ? F.hDew(Ps) : h1;
+    h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
+    etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
+    if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
+    if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
+    etaIs *= cfg.faults?.compEff ?? 1;
+    const etaMot = cfg.comp.type === 'inv' ? 0.88 : 0.9;
+    if (ctx.compRev) { Wel = 0.45 * (cfg.matched.Wnom || 2500) * 3.412; hDis = h1 + 28; }   // scroll turning backward: no pumping, little power, hot shell
+    else { Wel = m * (h2s - hsucEff) / etaIs / etaMot; hDis = h1 + Wel * (1 - 0.07) / m; }
   }
   SH = we > 0 ? F.shFromH(PeOut, hEo) : 0;
-  // compression
-  const h1 = hEo, shSuc = wet ? 0 : shS;
-  const hsucEff = wet ? F.hDew(Ps) : h1;
-  const h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
-  let etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
-  if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
-  if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
-  etaIs *= cfg.faults?.compEff ?? 1;
-  const etaMot = cfg.comp.type === 'inv' ? 0.88 : 0.9;
-  const Wel = m * (h2s - hsucEff) / etaIs / etaMot;
-  const hDis = h1 + Wel * (1 - 0.07) / m;
   // condenser
-  const Pco = PcIn - ctx.cond.dp * (m / mN) ** 1.8;
+  const Pco = PcIn - ctx.cond.dp * (mr / mN) ** 1.8;
   const hdC = F.hDew(PcIn), tdC = F.tDew(PcIn), tbCo = F.tBub(Pco), hbCo = F.hBub(Pco);
   const disSt = F.state(PcIn, hDis);
   const f3 = wc > 0 ? Math.min(wc / 100, 0.98) : 0;
   let hCo, xCo = 0, SC = 0, Tliq;
   if (wc > 0) {
     const cpl = (F.hLiqT(tbCo) - F.hLiqT(tbCo - 10)) / 10;
-    const Ca = f3 * cs.C, Cr = m * cpl, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
+    const Ca = f3 * cs.C, Cr = mr * cpl, Cmin = Math.min(Ca, Cr), Cmax = Math.max(Ca, Cr);
     const eps = effCF(f3 * ctx.cond.UA / Cmin, Cmin / Cmax);
-    hCo = hbCo - eps * Cmin * Math.max(0, tbCo - cs.T) / m;
+    hCo = hbCo - eps * Cmin * Math.max(0, tbCo - cs.T) / mr;
     Tliq = F.liqTfromH(hCo); SC = tbCo - Tliq;
   } else { xCo = clamp(-wc / 100, 0, 0.95); hCo = hbCo + xCo * (F.hDew(Pco) - hbCo); Tliq = F.state(Pco, hCo).T; }
-  const Q1 = m * Math.max(0, hDis - hdC);
+  const Q1 = mr * Math.max(0, hDis - hdC);
   const f1 = fracForQ(Q1, ctx.cond.UA, cs, Q1 / Math.max(0.5, disSt.T - tdC), disSt.T, 0, true);
   const hEnd2 = wc > 0 ? hbCo : hCo, Tend2 = wc > 0 ? tbCo : Tliq;
-  const Q2 = m * Math.max(0, hdC - hEnd2);
+  const Q2 = mr * Math.max(0, hdC - hEnd2);
   const eps2 = 1 - Math.exp(-ctx.cond.UA / cs.C);
   const f2 = Q2 / Math.max(1, eps2 * cs.C * Math.max(0.05, 0.5 * (tdC + Tend2) - cs.T));
   const r2 = 1 - (f1 + f2 + f3);
   // liquid line, metering, evaporator inlet
-  const Pmi = Pco - 1.5 * (cfg.lineLen / 25) * (m / mN) ** 1.8 - (cfg.faults?.liquidRestr ?? 0) * 60 * (m / mN) ** 2;
-  const PeIn = PeOut + ctx.evap.dp * (m / mN) ** 1.8;
+  const Pmi = Pco - 1.5 * (cfg.lineLen / 25) * (mr / mN) ** 1.8 - (cfg.faults?.liquidRestr ?? 0) * 60 * (mr / mN) ** 2;
+  const PeIn = PeOut + ctx.evap.dp * (mr / mN) ** 1.8;
   const hEi = hCo, eiSt = F.state(PeIn, hEi);
   const Tout2 = we >= 0 ? Te : F.state(PeOut, hEo).T;
   const Ttp = 0.5 * (eiSt.T + Tout2);
-  const QtpReq = m * Math.max(0, Math.min(hEo, hdE) - hEi);
+  const QtpReq = mr * Math.max(0, Math.min(hEo, hdE) - hEi);
   const epsE = 1 - Math.exp(-ctx.evap.UA / es.C);
   let qtp1, wetCoil = false;
   if (es.kind === 'air') {
@@ -264,10 +280,11 @@ function cycle(ctx, x, detail) {
   const mode = cfg.chargeMode;
   let r3, r4, mMeter = 0, open = null;
   const upSt = F.state(Pmi, hCo);
-  const dP = Math.max(0.1, Pmi - PeIn);
+  const dP = Math.max(0.1, Pmi + pnc - PeIn);
   const SHv = we >= 0 ? SH : we / 3;              // continuous "superheat signal" for flooded coil
   const SCv = wc >= 0 ? SC : wc / 3;
-  if (mode === 'sandbox' || mode === 'size') r3 = (SHv - cfg.shTarget) / 10;
+  if (ctx.compRev) r3 = (Pmi + pnc - PeIn) / 40;
+  else if (mode === 'sandbox' || mode === 'size') r3 = (SHv - cfg.shTarget) / 10;
   else {
     const M = ctx.meter, K = ctx.meterK, rho = upSt.rho;
     const tpPen = upSt.phase === '2ph' ? Math.max(0.15, 1 - 1.2 * upSt.x) : 1;
@@ -278,12 +295,16 @@ function cycle(ctx, x, detail) {
       const eev = M.meter === 'eev';
       const stat = eev ? M.eevSH - 0.3 : M.txvSet, G = eev ? 0.6 : 6;
       const Kf = (eev ? K.eevK : K.txvK) * (cfg.faults?.meterCap ?? 1);
-      let o = (SHv - stat) / G;
+      const tf = eev ? '' : ctx.txvFault;
+      let o = (SHv + (tf === 'looseBulb' ? 8 : 0) - stat) / G;          // loose bulb reads warm -> overfeeds
+      if (tf === 'stuckOpen') o = 1 + 0.0005 * o;
+      else if (tf === 'stuckPartial') o = 0.35 + 0.0005 * o;
+      else if (tf === 'lostCharge') o = 0.05 + 0.0005 * o;              // power element dead: spring closes it to the bleed
       if (cfg.faults?.txvStuck != null) o = cfg.faults.txvStuck + 0.0005 * o;
       open = o < 0 ? 0.004 * o : o > 1 ? 1 + 0.004 * (o - 1) : o;
       mMeter = 3600 * Kf * open * Math.sqrt(2 * GC * rho * dP * 144) * tpPen;
     }
-    r3 = (mMeter - m) / mN;
+    r3 = (mMeter - mr) / mN;
   }
   // charge inventory
   const sC = Math.max(1e-6, f1 + f2 + f3), sE = Math.max(1e-6, ftp + fsh);
@@ -306,7 +327,7 @@ function cycle(ctx, x, detail) {
   const res = [r1, r2, r3, r4];
   if (!detail) return res;
   Object.assign(out, { res, Te, Tc, SC, SH, zc: wc >= 0 ? SC : -xCo * 100, ze: we >= 0 ? SH : -(1 - xEo) * 100,
-    PeOut, PeIn, PcIn, Pco, Pmi, Ps, Pd, PR, dPs, dPd, m, h1, hDis, hCo, hEi, hEo, Wel, etaIs, etaV, shSuc, wet, disSt, upSt, eiSt,
+    PeOut, PeIn, PcIn, Pco, Pmi, Ps, Pd, PR, dPs, dPd, m, mr, fl, pnc, h1, hDis, hCo, hEi, hEo, Wel, etaIs, etaV, shSuc, wet, disSt, upSt, eiSt,
     Tliq, xCo, xEo, f: { f1, f2, f3, ftp, fsh }, inv, mMeter, open, qtp1, wetCoil, epsE, eps2, Ttp,
     mParts: { cond: mCond, evap: mEvap, liquidLine: mLL, vaporLine: mVL, compressorAcc: mShell } });
   return out;
@@ -373,24 +394,26 @@ function solveCtx(ctx, guess) {
 /* ---------------- Electrical ---------------- */
 function electrical(cfg, ctx, c, running) {
   const V = cfg.elec.volts * (cfg.faults?.voltage ?? 1), pf = 0.92, tons = cfg.tons;
+  const three = cfg.elec.phase === 3, k3 = three ? Math.sqrt(3) : 1, fx = cfg.faults || {};
   const e = { V };
   const fanW = (base, cfm, nom) => base * Math.pow(cfm / nom, 3);
   // indoor blower
   const esp = cfg.blower.esp;
   const effB = cfg.blower.type === 'ecm' ? 0.26 : 0.16;
-  const bW = cfg.blowerOn && !ctx.idWater ? 0.1175 * ctx.idCfm * Math.max(0.1, esp + 0.15) / effB : 0;
-  e.blower = { W: bW, A: bW / (V * (cfg.blower.type === 'ecm' ? 0.65 : 0.88)), type: cfg.blower.type };
+  const bW = cfg.blowerOn && !ctx.idWater ? 0.1175 * (ctx.idCfmCmd || ctx.idCfm) * Math.max(0.1, esp + 0.15) / effB : 0;
+  e.blower = { W: bW, A: bW / (k3 * V * (cfg.blower.type === 'ecm' ? 0.65 : 0.88)) * (three && fx.blowerRev ? 0.8 : 1), type: cfg.blower.type };
   if (cfg.blower.type === 'psc' && cfg.blowerOn && !ctx.idWater) { const C = cfg.elec.blowerCap * (cfg.faults?.blowerCapPct ?? 1); const Vc = V * 1.45; e.blower.capV = Vc; e.blower.capA = 377 * C * 1e-6 * Vc * 0.5; e.blower.capRated = cfg.elec.blowerCap; e.blower.capMeas = e.blower.capA * 2652 / Vc; }
   // outdoor fan
   const odOn = running && !ctx.water;
-  const ofW = odOn ? fanW(60 * tons, ctx.odCfm, ctx.odCfmNom) * (cfg.faults?.odAirflow === 0 ? 0 : 1) + (odOn ? 15 : 0) : 0;
-  e.odFan = { W: ofW, A: ofW / (V * 0.86) };
+  const ofW = odOn ? fanW(60 * tons, ctx.odCfmCmd || ctx.odCfm, ctx.odCfmNom) * (cfg.faults?.odAirflow === 0 ? 0 : 1) + (odOn ? 15 : 0) : 0;
+  e.odFan = { W: ofW, A: ofW / (k3 * V * 0.86) * (three && fx.odFanRev ? 0.9 : 1) };
   if (odOn) { const C = cfg.elec.fanCap * (cfg.faults?.fanCapPct ?? 1), Vc = V * 1.5; e.odFan.capV = Vc; e.odFan.capA = 377 * C * 1e-6 * Vc; e.odFan.capRated = cfg.elec.fanCap; e.odFan.capMeas = e.odFan.capA * 2652 / Vc; }
   // compressor
   const W = running && c ? c.Wel / 3.412 : 0;
   const inv = cfg.comp.type === 'inv';
   const comp = { W, type: cfg.comp.type };
-  if (inv) { comp.A = W / (V * 0.97); comp.hz = Math.round(ctx.speed * 75); }
+  if (inv) { comp.A = W / (k3 * V * 0.97); comp.hz = Math.round(ctx.speed * 75); }
+  else if (three) { comp.A = W / (k3 * V * pf); comp.L = [comp.A, comp.A * 1.01, comp.A * 0.99]; }
   else {
     const capPct = cfg.faults?.compCapPct ?? 1;
     const ampsBoost = 1 + 0.6 * Math.max(0, 1 - capPct);
@@ -402,7 +425,8 @@ function electrical(cfg, ctx, c, running) {
     comp.R = running ? Math.sqrt(Math.max(0, comp.C * comp.C - comp.S * comp.S * 0.55)) : 0;
     comp.capRated = cfg.elec.compCap; comp.capMeas = comp.S > 0 ? comp.S * 2652 / Vc : 0;
   }
-  comp.RLA = cfg.matched.RLA; comp.LRA = Math.round(cfg.matched.RLA * 5.2);
+  comp.RLA = Math.round(cfg.matched.RLA * (230 / (cfg.elec.nomV || 230)) / k3 * 10) / 10; comp.LRA = Math.round(comp.RLA * (three ? 7 : 5.2));
+  comp.three = three;
   e.comp = comp;
   e.odUnitA = comp.A + e.odFan.A;
   e.totalW = W + ofW + bW;
