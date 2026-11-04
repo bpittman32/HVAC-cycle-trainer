@@ -114,6 +114,7 @@ table.ports th,table.ports td{padding:5px 4px}
 table.ports small{color:var(--muted);font-size:10px}
 table.ports td:first-child{white-space:normal}
 #tab-readings td:first-child{white-space:normal}
+#tab-readings th{white-space:normal;vertical-align:bottom;line-height:1.2}
 @media(min-width:820px){#tab-readings .kv,#tab-elec .kv{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #tab-readings .kv b,#tab-elec .kv b{white-space:nowrap}
 .ports .dot{margin-right:4px}
@@ -152,7 +153,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.2.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.2.1</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -1780,7 +1781,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.2.0 started at steady state.');
+logEvent('Simulator v1.2.1 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
