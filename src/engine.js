@@ -107,7 +107,7 @@ function defaultSwitches(F) {
   const r5 = p => Math.round(p / 5) * 5;
   const g = t => F.pDew(t) - PATM;
   const hpsSat = F.name === 'R-404A' || F.name === 'R-407C' ? 140 : 149;
-  return { hpsOpen: r5(g(hpsSat)), hpsClose: r5(g(hpsSat - 25)), lpsOpen: r5(Math.max(g(-15), 3)), lpsClose: r5(g(20)), asc: 300, lpsBypass: 90, maxTrips: 3 };
+  return { hpsOpen: r5(g(hpsSat)), hpsClose: r5(g(hpsSat - 25)), lpsOpen: r5(Math.max(g(-15), 3)), lpsClose: r5(g(20)), asc: 30, lpsBypass: 90, maxTrips: 3 };
 }
 
 /* ---------------- Context builder ---------------- */

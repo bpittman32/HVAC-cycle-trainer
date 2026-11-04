@@ -988,6 +988,7 @@ document.body.dataset.view = 'system';
 
 /* ---------- boot ---------- */
 if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
+if (cfg.sw && cfg.sw.asc === 300) cfg.sw.asc = 30;   // older saved default
 $('mCool').classList.toggle('on', cfg.mode === 'cool'); $('mHeat').classList.toggle('on', cfg.mode === 'heat');
 buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
