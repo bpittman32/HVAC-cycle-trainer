@@ -147,6 +147,7 @@ const GLOSSARY = {
   'supply': 'Electrical supply to the outdoor unit.',
   'l1 amps': 'Current on line 1 of the three-phase supply.', 'l2 amps': 'Current on line 2 of the three-phase supply.', 'l3 amps': 'Current on line 3 of the three-phase supply.',
   'compressor l1': 'Compressor current on line 1.', 'compressor l2': 'Compressor current on line 2.', 'compressor l3': 'Compressor current on line 3.',
+  'series': 'Readings you can plot over time. Pressure and temperature are charted separately so each has its own honest scale.',
   'freeze protection': 'Stops the compressor when a water loop gets too cold.',
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',

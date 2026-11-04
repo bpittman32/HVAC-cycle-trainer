@@ -143,6 +143,23 @@ svg text{font-family:var(--f-body)}
 #tip b{color:var(--accent);font-weight:600}
 .tile .k,.kv span,th,.changes li span,td[data-port],#tab-controls label{cursor:help}
 .kv span:hover,.tile .k:hover,th:hover,td[data-port]:hover,.changes li span:hover,#tab-controls label:hover{text-decoration:underline dotted;text-underline-offset:3px}
+#probe .pchart{margin-top:10px}
+.trend-bar,.pc-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.trend-bar select,.pc-bar select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.chartwrap{position:relative;background:var(--panel2);border-radius:10px;border:1px solid var(--line)}
+.chartwrap canvas{width:100%;display:block;background:transparent;border-radius:10px}
+.ttip{position:absolute;top:8px;display:none;background:#0b0f12;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;pointer-events:none;min-width:140px;z-index:5}
+.ttip .tt-h{color:var(--muted);font-family:var(--f-num);margin-bottom:3px}
+.ttip .tt-r{display:grid;grid-template-columns:10px auto 1fr;gap:6px;align-items:center}
+.ttip .tt-r i{width:10px;height:3px;border-radius:2px}
+.ttip .tt-r b{font-family:var(--f-num);font-weight:600;text-align:right}
+.ttip .tt-r span{color:var(--muted)}
+.legend2{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--ink);margin-top:8px}
+.legend2 i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.trend-picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 12px;font-size:13px}
+.trend-picks label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.trend-picks input{accent-color:var(--accent)}
+.trend-picks .sw{width:12px;height:3px;border-radius:2px;display:inline-block}
 </style>
 </head>
 <body>
@@ -170,19 +187,28 @@ svg text{font-family:var(--f-body)}
     <svg class="schem" id="schem" viewBox="0 0 400 300" role="img" aria-label="Split heat pump schematic"></svg>
     <div class="legend"><span><i style="background:var(--hot)"></i>Hot gas</span><span><i style="background:var(--liq)"></i>Liquid</span><span><i style="background:var(--mix)"></i>Low-side mixture</span><span><i style="background:var(--suct)"></i>Suction vapor</span><span><i style="background:repeating-linear-gradient(90deg,var(--liq) 0 3px,#fff 3px 5px)"></i>Flash gas</span></div>
     <div class="alerts" id="alerts"></div>
-    <div class="probe" id="probe"></div>
+    <div class="probe" id="probe"><div id="probeBody"></div><div id="probeChart"></div></div>
   </div>
   <div class="card changes" id="changes" style="margin-top:12px"><h2>What changed</h2><div class="note">Adjust anything. Every reading that moves is listed here and flagged on the gauges above, so you can see both sides of the system react together.</div></div>
 </div>
 
 <div class="card" id="rightCard">
   <div class="tabs" role="tablist">
-    <button class="on" data-tab="controls">Controls</button><button data-tab="readings">Readings</button><button data-tab="ph">P-h chart</button><button data-tab="elec">Electrical</button><button data-tab="log">Log</button>
+    <button class="on" data-tab="controls">Controls</button><button data-tab="readings">Readings</button><button data-tab="ph">P-h chart</button><button data-tab="elec">Electrical</button><button data-tab="trends">Trends</button><button data-tab="log">Log</button>
   </div>
   <div class="pane on" id="tab-controls"></div>
   <div class="pane" id="tab-readings"></div>
   <div class="pane" id="tab-ph"><canvas id="ph" height="400"></canvas><p class="hint">Log pressure vs enthalpy. Dome from the selected refrigerant's property tables; the cycle is drawn from the current operating point. Numbers match the ports on the schematic.</p></div>
   <div class="pane" id="tab-elec"></div>
+  <div class="pane" id="tab-trends">
+    <div class="trend-bar"><span class="seg" role="group" aria-label="Chart pressure or temperature"><button data-tk="P" class="on">Pressure</button><button data-tk="T">Temperature</button></span>
+      <select id="trendWin" aria-label="Time window"><option value="300">Last 5 min</option><option value="900" selected>Last 15 min</option><option value="3600">Last hour</option><option value="0">All</option></select>
+      <button class="btn" id="trendClear">Clear history</button></div>
+    <div class="chartwrap" id="trendWrap"><canvas id="trendCv" style="height:340px"></canvas><div class="ttip"></div></div>
+    <div class="legend2" id="trendLegend"></div>
+    <h2 style="margin-top:12px">Series</h2><div class="trend-picks" id="trendPicks"></div>
+    <p class="hint">Up to eight series at once. Time is simulated time. Click a port on the schematic and use “Add to Trends” to send it here.</p>
+  </div>
   <div class="pane" id="tab-log"></div>
 </div>
 </div>
@@ -378,6 +404,7 @@ function tick(dtReal){
     if (!isFinite(b)) { disp[k] = a; continue; }
     disp[k] = b + (a - b) * (1 - Math.exp(-dt / tau(k)));
   }
+  histRecord(S.t, disp);
   renderTiles(); renderStatus(); updateSchemLive();
 }
 
@@ -661,7 +688,8 @@ function renderProbe(){
       h = `<h3>Suction accumulator</h3><p class="hint">Catches liquid that leaves the evaporator so it can't slug the compressor.</p>` + kv([['Evaporator exit', on ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F SH' : `${(r.xEo*100).toFixed(0)}% vapor`) : '—'], ['Holding liquid', on && r.ze < 0 ? 'YES' : 'no']]);
     }
   }
-  el.innerHTML = h;
+  $('probeBody').innerHTML = h;
+  updateProbeChart();
 }
 let probeOpen = false;
 
@@ -1091,8 +1119,11 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + b.dataset.tab));
   if (b.dataset.tab === 'ph') drawPH();
+  if (b.dataset.tab === 'trends') { renderTrendPicks(); drawTrendsTab(); }
 }));
 window.addEventListener('resize', () => drawPH());
+
+/*TRENDS*/
 
 /* ---------- hover explanations ---------- */
 const tipEl = document.createElement('div'); tipEl.id = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl);
@@ -1127,6 +1158,8 @@ solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
 logEvent('Simulator v/*VERSION*/ started at steady state.');
+histRecord(S.t, disp, true);
+setupTrendsTab();
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
@@ -1135,7 +1168,7 @@ setInterval(() => {
   const before = sig();
   tick(dt);
   if (before !== sig()) renderAll();
-  if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); }
+  if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); if ($('tab-trends').classList.contains('on')) drawTrendsTab(); }
 }, 250);
 })();
 </script>

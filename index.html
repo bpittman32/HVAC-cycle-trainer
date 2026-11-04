@@ -143,6 +143,23 @@ svg text{font-family:var(--f-body)}
 #tip b{color:var(--accent);font-weight:600}
 .tile .k,.kv span,th,.changes li span,td[data-port],#tab-controls label{cursor:help}
 .kv span:hover,.tile .k:hover,th:hover,td[data-port]:hover,.changes li span:hover,#tab-controls label:hover{text-decoration:underline dotted;text-underline-offset:3px}
+#probe .pchart{margin-top:10px}
+.trend-bar,.pc-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.trend-bar select,.pc-bar select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.chartwrap{position:relative;background:var(--panel2);border-radius:10px;border:1px solid var(--line)}
+.chartwrap canvas{width:100%;display:block;background:transparent;border-radius:10px}
+.ttip{position:absolute;top:8px;display:none;background:#0b0f12;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;pointer-events:none;min-width:140px;z-index:5}
+.ttip .tt-h{color:var(--muted);font-family:var(--f-num);margin-bottom:3px}
+.ttip .tt-r{display:grid;grid-template-columns:10px auto 1fr;gap:6px;align-items:center}
+.ttip .tt-r i{width:10px;height:3px;border-radius:2px}
+.ttip .tt-r b{font-family:var(--f-num);font-weight:600;text-align:right}
+.ttip .tt-r span{color:var(--muted)}
+.legend2{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--ink);margin-top:8px}
+.legend2 i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.trend-picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 12px;font-size:13px}
+.trend-picks label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.trend-picks input{accent-color:var(--accent)}
+.trend-picks .sw{width:12px;height:3px;border-radius:2px;display:inline-block}
 </style>
 </head>
 <body>
@@ -153,7 +170,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.4.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.5.0</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -170,19 +187,28 @@ svg text{font-family:var(--f-body)}
     <svg class="schem" id="schem" viewBox="0 0 400 300" role="img" aria-label="Split heat pump schematic"></svg>
     <div class="legend"><span><i style="background:var(--hot)"></i>Hot gas</span><span><i style="background:var(--liq)"></i>Liquid</span><span><i style="background:var(--mix)"></i>Low-side mixture</span><span><i style="background:var(--suct)"></i>Suction vapor</span><span><i style="background:repeating-linear-gradient(90deg,var(--liq) 0 3px,#fff 3px 5px)"></i>Flash gas</span></div>
     <div class="alerts" id="alerts"></div>
-    <div class="probe" id="probe"></div>
+    <div class="probe" id="probe"><div id="probeBody"></div><div id="probeChart"></div></div>
   </div>
   <div class="card changes" id="changes" style="margin-top:12px"><h2>What changed</h2><div class="note">Adjust anything. Every reading that moves is listed here and flagged on the gauges above, so you can see both sides of the system react together.</div></div>
 </div>
 
 <div class="card" id="rightCard">
   <div class="tabs" role="tablist">
-    <button class="on" data-tab="controls">Controls</button><button data-tab="readings">Readings</button><button data-tab="ph">P-h chart</button><button data-tab="elec">Electrical</button><button data-tab="log">Log</button>
+    <button class="on" data-tab="controls">Controls</button><button data-tab="readings">Readings</button><button data-tab="ph">P-h chart</button><button data-tab="elec">Electrical</button><button data-tab="trends">Trends</button><button data-tab="log">Log</button>
   </div>
   <div class="pane on" id="tab-controls"></div>
   <div class="pane" id="tab-readings"></div>
   <div class="pane" id="tab-ph"><canvas id="ph" height="400"></canvas><p class="hint">Log pressure vs enthalpy. Dome from the selected refrigerant's property tables; the cycle is drawn from the current operating point. Numbers match the ports on the schematic.</p></div>
   <div class="pane" id="tab-elec"></div>
+  <div class="pane" id="tab-trends">
+    <div class="trend-bar"><span class="seg" role="group" aria-label="Chart pressure or temperature"><button data-tk="P" class="on">Pressure</button><button data-tk="T">Temperature</button></span>
+      <select id="trendWin" aria-label="Time window"><option value="300">Last 5 min</option><option value="900" selected>Last 15 min</option><option value="3600">Last hour</option><option value="0">All</option></select>
+      <button class="btn" id="trendClear">Clear history</button></div>
+    <div class="chartwrap" id="trendWrap"><canvas id="trendCv" style="height:340px"></canvas><div class="ttip"></div></div>
+    <div class="legend2" id="trendLegend"></div>
+    <h2 style="margin-top:12px">Series</h2><div class="trend-picks" id="trendPicks"></div>
+    <p class="hint">Up to eight series at once. Time is simulated time. Click a port on the schematic and use “Add to Trends” to send it here.</p>
+  </div>
   <div class="pane" id="tab-log"></div>
 </div>
 </div>
@@ -850,6 +876,7 @@ const GLOSSARY = {
   'supply': 'Electrical supply to the outdoor unit.',
   'l1 amps': 'Current on line 1 of the three-phase supply.', 'l2 amps': 'Current on line 2 of the three-phase supply.', 'l3 amps': 'Current on line 3 of the three-phase supply.',
   'compressor l1': 'Compressor current on line 1.', 'compressor l2': 'Compressor current on line 2.', 'compressor l3': 'Compressor current on line 3.',
+  'series': 'Readings you can plot over time. Pressure and temperature are charted separately so each has its own honest scale.',
   'freeze protection': 'Stops the compressor when a water loop gets too cold.',
   'refrigerant': 'Refrigerant in the system. Changing it re-matches compressor, metering, switches and charge.',
   'nominal size': 'Nominal capacity in tons.',
@@ -1187,6 +1214,7 @@ function tick(dtReal){
     if (!isFinite(b)) { disp[k] = a; continue; }
     disp[k] = b + (a - b) * (1 - Math.exp(-dt / tau(k)));
   }
+  histRecord(S.t, disp);
   renderTiles(); renderStatus(); updateSchemLive();
 }
 
@@ -1470,7 +1498,8 @@ function renderProbe(){
       h = `<h3>Suction accumulator</h3><p class="hint">Catches liquid that leaves the evaporator so it can't slug the compressor.</p>` + kv([['Evaporator exit', on ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F SH' : `${(r.xEo*100).toFixed(0)}% vapor`) : '—'], ['Holding liquid', on && r.ze < 0 ? 'YES' : 'no']]);
     }
   }
-  el.innerHTML = h;
+  $('probeBody').innerHTML = h;
+  updateProbeChart();
 }
 let probeOpen = false;
 
@@ -1900,8 +1929,157 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + b.dataset.tab));
   if (b.dataset.tab === 'ph') drawPH();
+  if (b.dataset.tab === 'trends') { renderTrendPicks(); drawTrendsTab(); }
 }));
 window.addEventListener('resize', () => drawPH());
+
+/* ---------- trend history & charts ---------- */
+const HIST_MAX = 5400;                       // 3 h of simulated time at 2 s
+const HIST = { t: [], v: {} };
+const TREND_COLORS = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'];
+let histAcc = 0;
+function histRecord(t, d, force) {
+  if (!force && t - (HIST.t[HIST.t.length - 1] ?? -1e9) < 2) return;
+  HIST.t.push(t);
+  const keys = ['lowP','highP','Tsuc','Tliq','Tdis','SH','SC','amps','Ps','Pd'];
+  for (let i = 1; i <= 9; i++) keys.push('P' + i, 'T' + i);
+  for (const k of keys) { (HIST.v[k] = HIST.v[k] || []).push(d[k]); }
+  if (HIST.t.length > HIST_MAX) { HIST.t.shift(); for (const k in HIST.v) HIST.v[k].shift(); }
+}
+function histClear() { HIST.t.length = 0; for (const k in HIST.v) HIST.v[k].length = 0; }
+const clockTxt = t => { const m = Math.floor(t / 60), s = Math.floor(t % 60); return m >= 60 ? `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`; };
+/* series: [{key, label, color}]; kind 'P' (psig) or 'T' (°F); win seconds or 0 = all */
+function drawTrend(cv, series, kind, win, hover) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight || 180;
+  if (!W) return null;
+  cv.width = W * dpr; cv.height = H * dpr; const x = cv.getContext('2d'); x.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const L = 48, R = 14, T = 10, B = 24;
+  const n = HIST.t.length; x.clearRect(0, 0, W, H);
+  x.font = '11px IBM Plex Mono, monospace'; x.fillStyle = col('--muted');
+  if (n < 2 || !series.length) { x.fillText(series.length ? 'Collecting data…' : 'Pick a series to chart.', L, H / 2); return null; }
+  const tEnd = HIST.t[n - 1], tStart = win ? Math.max(HIST.t[0], tEnd - win) : HIST.t[0];
+  let i0 = 0; while (i0 < n - 1 && HIST.t[i0] < tStart) i0++;
+  const conv = v => kind === 'P' ? v - PATM : v;
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) { const a = HIST.v[s.key] || []; for (let i = i0; i < n; i++) { const v = conv(a[i]); if (isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } } }
+  if (!isFinite(lo)) { x.fillText('No data for this reading yet.', L, H / 2); return null; }
+  const pad = Math.max((hi - lo) * 0.08, kind === 'P' ? 5 : 2); lo -= pad; hi += pad;
+  const span = tEnd - tStart || 1;
+  const X = t => L + (t - tStart) / span * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  // recessive grid + ticks
+  const step = (() => { const raw = (hi - lo) / 4, p = Math.pow(10, Math.floor(Math.log10(raw))); return [1,2,5,10].map(k => k * p).find(k => k >= raw); })();
+  x.strokeStyle = col('--line'); x.lineWidth = 1; x.textAlign = 'right'; x.textBaseline = 'middle';
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) { const y = Y(v); x.beginPath(); x.moveTo(L, y); x.lineTo(W - R, y); x.stroke(); x.fillText(+v.toFixed(1), L - 6, y); }
+  x.textAlign = 'center'; x.textBaseline = 'top';
+  for (let k = 0; k <= 4; k++) { const t = tStart + span * k / 4; x.fillText(clockTxt(t), X(t), H - B + 6); }
+  x.save(); x.translate(10, T + (H - T - B) / 2); x.rotate(-Math.PI / 2); x.textBaseline = 'middle'; x.fillText(kind === 'P' ? 'psig' : '°F', 0, 0); x.restore();
+  // lines (2px), endpoint marker
+  const stride = Math.max(1, Math.floor((n - i0) / 700));
+  for (const s of series) {
+    const a = HIST.v[s.key] || []; x.strokeStyle = s.color; x.lineWidth = 2; x.lineJoin = 'round'; x.beginPath(); let started = false;
+    for (let i = i0; i < n; i += stride) { const v = conv(a[i]); if (!isFinite(v)) { started = false; continue; } const px = X(HIST.t[i]), py = Y(v); started ? x.lineTo(px, py) : x.moveTo(px, py); started = true; }
+    const lv = conv(a[n - 1]); if (started && isFinite(lv)) x.lineTo(X(tEnd), Y(lv)); x.stroke();
+    if (isFinite(lv)) { x.fillStyle = col('--panel2'); x.beginPath(); x.arc(X(tEnd), Y(lv), 4, 0, 7); x.fill(); x.fillStyle = s.color; x.beginPath(); x.arc(X(tEnd), Y(lv), 3, 0, 7); x.fill(); }
+  }
+  // crosshair
+  let readout = null;
+  if (hover != null && hover >= L && hover <= W - R) {
+    const th = tStart + (hover - L) / (W - L - R) * span;
+    let i = i0; while (i < n - 1 && HIST.t[i + 1] <= th) i++;
+    if (i + 1 < n && Math.abs(HIST.t[i + 1] - th) < Math.abs(HIST.t[i] - th)) i++;
+    const px = X(HIST.t[i]); x.strokeStyle = col('--muted'); x.lineWidth = 1; x.beginPath(); x.moveTo(px, T); x.lineTo(px, H - B); x.stroke();
+    readout = { t: HIST.t[i], px, rows: series.map(s => { const v = conv((HIST.v[s.key] || [])[i]); if (isFinite(v)) { x.fillStyle = s.color; x.beginPath(); x.arc(px, Y(v), 4, 0, 7); x.fill(); } return { label: s.label, color: s.color, v }; }) };
+  }
+  return readout;
+}
+function attachTrendHover(wrap, redraw) {
+  const cv = wrap.querySelector('canvas'), tip = wrap.querySelector('.ttip');
+  const show = r => { if (!r) { tip.style.display = 'none'; return; }
+    tip.replaceChildren(); const h = document.createElement('div'); h.className = 'tt-h'; h.textContent = 't = ' + clockTxt(r.t); tip.appendChild(h);
+    for (const row of r.rows) { const d = document.createElement('div'); d.className = 'tt-r'; const sw = document.createElement('i'); sw.style.background = row.color; const b = document.createElement('b'); b.textContent = isFinite(row.v) ? row.v.toFixed(1) : '—'; const sp = document.createElement('span'); sp.textContent = row.label; d.append(sw, b, sp); tip.appendChild(d); }
+    tip.style.display = 'block'; const left = r.px + 12 + tip.offsetWidth > cv.clientWidth ? r.px - 12 - tip.offsetWidth : r.px + 12; tip.style.left = left + 'px'; };
+  cv.onpointermove = ev => { const rect = cv.getBoundingClientRect(); wrap.dataset.hx = ev.clientX - rect.left; show(redraw(+wrap.dataset.hx)); };
+  cv.onpointerleave = () => { delete wrap.dataset.hx; tip.style.display = 'none'; redraw(null); };
+}
+
+/* ---------- chart in the readings panel ---------- */
+const PC = { kind: 'P', win: 900, sel: '' };
+function portLabel(i) { return `${i} · ${PORTSHORT[physHeat() ? 'heat' : 'cool'][i - 1]}`; }
+function probeSeries() {
+  if (!selected) return [];
+  if (selected.kind === 'tp') return [{ key: PC.kind + selected.id, label: portLabel(selected.id), color: TREND_COLORS[0] }];
+  if (selected.id === 'comp') return PC.kind === 'P'
+    ? [{ key: 'Ps', label: 'Suction', color: TREND_COLORS[0] }, { key: 'Pd', label: 'Discharge', color: TREND_COLORS[1] }]
+    : [{ key: 'T9', label: 'Suction gas', color: TREND_COLORS[0] }, { key: 'Tdis', label: 'Discharge line', color: TREND_COLORS[1] }];
+  return [];
+}
+function updateProbeChart() {
+  const box = $('probeChart'); if (!box) return;
+  const show = selected && (selected.kind === 'tp' || selected.id === 'comp');
+  const selKey = show ? selected.kind + selected.id : '';
+  if (!show) { box.innerHTML = ''; PC.sel = ''; return; }
+  if (PC.sel !== selKey) {
+    PC.sel = selKey;
+    const isTp = selected.kind === 'tp';
+    box.innerHTML = `<div class="pchart"><div class="pc-bar"><span class="seg" role="group" aria-label="Chart pressure or temperature"><button data-pk="P">Pressure</button><button data-pk="T">Temperature</button></span>
+      <select id="pcWin" aria-label="Time window"><option value="300">Last 5 min</option><option value="900">Last 15 min</option><option value="3600">Last hour</option><option value="0">All</option></select>
+      ${isTp ? '<button class="btn" id="pcAdd"></button>' : ''}</div>
+      <div class="chartwrap" id="pcWrap"><canvas style="height:170px"></canvas><div class="ttip"></div></div><div class="legend2" id="pcLegend"></div></div>`;
+    box.querySelectorAll('[data-pk]').forEach(b => b.addEventListener('click', () => { PC.kind = b.dataset.pk; updateProbeChart(); }));
+    $('pcWin').value = String(PC.win); $('pcWin').addEventListener('change', e => { PC.win = +e.target.value; drawProbeChart(); });
+    if (isTp) $('pcAdd').addEventListener('click', () => { toggleTrend('port' + selected.id); updateProbeChart(); });
+    attachTrendHover($('pcWrap'), hx => drawTrend($('pcWrap').querySelector('canvas'), probeSeries(), PC.kind, PC.win, hx));
+  }
+  box.querySelectorAll('[data-pk]').forEach(b => b.classList.toggle('on', b.dataset.pk === PC.kind));
+  const add = $('pcAdd'); if (add) add.textContent = TR.sel.includes('port' + selected.id) ? 'Remove from Trends' : 'Add to Trends';
+  const ser = probeSeries();
+  $('pcLegend').innerHTML = ser.length > 1 ? ser.map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') : '';
+  drawProbeChart();
+}
+function drawProbeChart() { const w = $('pcWrap'); if (!w) return; drawTrend(w.querySelector('canvas'), probeSeries(), PC.kind, PC.win, w.dataset.hx != null ? +w.dataset.hx : null); }
+
+/* ---------- Trends tab ---------- */
+const TR = { kind: 'P', win: 900, sel: ['port9', 'port1'], slot: { port9: 0, port1: 1 } };
+function trendEntities() {
+  const ents = [];
+  for (let i = 1; i <= 9; i++) ents.push({ id: 'port' + i, label: portLabel(i), P: 'P' + i, T: 'T' + i });
+  ents.push({ id: 'lowP', label: 'Low-side gauge', P: 'lowP' }, { id: 'highP', label: 'High-side gauge', P: 'highP' },
+            { id: 'Tsuc', label: 'Suction line (SH point)', T: 'Tsuc' }, { id: 'Tliq', label: 'Liquid line (SC point)', T: 'Tliq' },
+            { id: 'Tdis', label: 'Discharge line', T: 'Tdis' }, { id: 'SH', label: 'Superheat', T: 'SH' }, { id: 'SC', label: 'Subcooling', T: 'SC' });
+  return ents;
+}
+function toggleTrend(id) {
+  const i = TR.sel.indexOf(id);
+  if (i >= 0) { TR.sel.splice(i, 1); delete TR.slot[id]; }
+  else {
+    if (TR.sel.length >= 8) { logEvent('Trends hold up to eight series — remove one first.'); return; }
+    const used = new Set(Object.values(TR.slot)); let k = 0; while (used.has(k)) k++;
+    TR.sel.push(id); TR.slot[id] = k;
+  }
+  renderTrendPicks(); drawTrendsTab();
+}
+function trendSeries() {
+  const ents = trendEntities();
+  return TR.sel.map(id => ents.find(e => e.id === id)).filter(e => e && e[TR.kind]).map(e => ({ key: e[TR.kind], label: e.label, color: TREND_COLORS[TR.slot[e.id]] }));
+}
+function renderTrendPicks() {
+  const box = $('trendPicks'); if (!box) return;
+  box.innerHTML = trendEntities().filter(e => e[TR.kind]).map(e => { const on = TR.sel.includes(e.id);
+    return `<label><input type="checkbox" data-te="${e.id}"${on ? ' checked' : ''}><span class="sw" style="background:${on ? TREND_COLORS[TR.slot[e.id]] : 'transparent'}"></span>${esc(e.label)}</label>`; }).join('');
+  box.querySelectorAll('[data-te]').forEach(c => c.addEventListener('change', () => toggleTrend(c.dataset.te)));
+  const ser = trendSeries();
+  $('trendLegend').innerHTML = ser.map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('');
+}
+function drawTrendsTab() { const w = $('trendWrap'); if (!w || !w.offsetParent) return; drawTrend($('trendCv'), trendSeries(), TR.kind, TR.win, w.dataset.hx != null ? +w.dataset.hx : null); }
+function setupTrendsTab() {
+  document.querySelectorAll('[data-tk]').forEach(b => b.addEventListener('click', () => { TR.kind = b.dataset.tk; document.querySelectorAll('[data-tk]').forEach(x => x.classList.toggle('on', x === b)); renderTrendPicks(); drawTrendsTab(); }));
+  $('trendWin').addEventListener('change', e => { TR.win = +e.target.value; drawTrendsTab(); });
+  $('trendClear').addEventListener('click', () => { histClear(); histRecord(S.t, disp, true); drawTrendsTab(); drawProbeChart(); });
+  attachTrendHover($('trendWrap'), hx => drawTrend($('trendCv'), trendSeries(), TR.kind, TR.win, hx));
+  renderTrendPicks();
+}
+
 
 /* ---------- hover explanations ---------- */
 const tipEl = document.createElement('div'); tipEl.id = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl);
@@ -1935,7 +2113,9 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.4.0 started at steady state.');
+logEvent('Simulator v1.5.0 started at steady state.');
+histRecord(S.t, disp, true);
+setupTrendsTab();
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
@@ -1944,7 +2124,7 @@ setInterval(() => {
   const before = sig();
   tick(dt);
   if (before !== sig()) renderAll();
-  if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); }
+  if (++slow % 4 === 0) { renderProbe(); if ($('tab-elec').classList.contains('on')) renderElec(); if ($('tab-trends').classList.contains('on')) drawTrendsTab(); }
 }, 250);
 })();
 </script>

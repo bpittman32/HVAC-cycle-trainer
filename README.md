@@ -22,6 +22,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - High/low pressure switches with trips, anti-short-cycle and lockout
 - Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart
+- Trend charts: every port's pressure and temperature (plus gauge readings) recorded over simulated time; chart one point from its readings panel or overlay up to eight on the Trends tab
 
 ## Project layout
 
@@ -33,6 +34,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 | `src/props.json` | Refrigerant property tables |
 | `src/glossary.js` | Hover explanations for every reading and setting |
 | `src/tests.js` | Standard test points for each unit type |
+| `src/trends.js` | Trend history and charts |
 | `tools/props.py` | Regenerates `props.json` (Peng-Robinson EOS fitted to PT charts; needs numpy + scipy) |
 | `tools/build.py` | Inlines engine and tables into `index.html` |
 

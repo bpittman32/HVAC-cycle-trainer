@@ -6,6 +6,7 @@ s = s.replace('/*PROPS*/', 'const PROPS = ' + (root / 'src/props.json').read_tex
 s = s.replace('/*ENGINE*/', (root / 'src/engine.js').read_text())
 s = s.replace('/*GLOSSARY*/', (root / 'src/glossary.js').read_text())
 s = s.replace('/*TESTS*/', (root / 'src/tests.js').read_text())
+s = s.replace('/*TRENDS*/', (root / 'src/trends.js').read_text())
 import datetime
 version = (root / 'VERSION').read_text().strip()
 s = s.replace('/*VERSION*/', version).replace('/*BUILD*/', datetime.date.today().isoformat())
