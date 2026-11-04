@@ -107,6 +107,18 @@ const WFLUID = {
   eg40: { name: 'Ethylene glycol 40%', cp: 0.82, sg: 1.05, fp: -11, ua: 0.85 },
 };
 const isWater = t => !COIL[t].air;
+/* Compressor types. eV(PR) volumetric efficiency, eI(PR) isentropic efficiency at full load,
+   shell: fraction of input lost from the shell (oil cooling for screws), rot: pumps only one way */
+const COMP = {
+  single:    { name: 'Scroll, single-speed', eV: PR => 0.985 - 0.014 * PR, eI: PR => 0.78 - 0.022 * (PR - 2.9) ** 2, shell: 0.07, rot: true },
+  two:       { name: 'Scroll, two-stage', eV: PR => 0.985 - 0.014 * PR, eI: PR => 0.78 - 0.022 * (PR - 2.9) ** 2, shell: 0.07, rot: true },
+  inv:       { name: 'Scroll, inverter', eV: PR => 0.985 - 0.014 * PR, eI: PR => 0.78 - 0.022 * (PR - 2.9) ** 2, shell: 0.07, rot: true, drive: true },
+  digital:   { name: 'Digital scroll', eV: PR => 0.985 - 0.014 * PR, eI: PR => 0.77 - 0.022 * (PR - 2.9) ** 2, shell: 0.07, rot: true },
+  recip:     { name: 'Reciprocating', eV: PR => 1.045 - 0.045 * Math.pow(PR, 1 / 1.1) - 0.02, eI: PR => 0.70 - 0.012 * (PR - 3.2) ** 2, shell: 0.10, rot: false },
+  rotary:    { name: 'Rotary, single-speed', eV: PR => 0.99 - 0.012 * PR, eI: PR => 0.76 - 0.02 * (PR - 3.0) ** 2, shell: 0.06, rot: true },
+  invRotary: { name: 'Rotary, inverter', eV: PR => 0.99 - 0.012 * PR, eI: PR => 0.76 - 0.02 * (PR - 3.0) ** 2, shell: 0.06, rot: true, drive: true },
+  screw:     { name: 'Screw (slide valve)', eV: PR => 0.95 - 0.005 * PR, eI: PR => 0.74 - 0.025 * (PR - 2.9) ** 2, shell: 0.22, rot: true, three: true },
+};
 function lineIDs(tons) {
   const liq = tons <= 5 ? 0.311 : 0.430;
   const vap = tons <= 2 ? 0.555 : tons <= 3 ? 0.666 : tons <= 4 ? 0.785 : tons <= 7.5 ? 1.025 : 1.265;
@@ -171,8 +183,11 @@ function buildCtx(cfg, FL) {
   };
   const c = cfg.comp; let spd = 1;
   if (c.type === 'two') spd = c.stage === 'low' ? 0.67 : 1;
-  else if (c.type === 'inv') spd = c.speed / 100;
-  ctx.compRev = three && !!fx.compRev;
+  else if (c.type === 'inv' || c.type === 'invRotary') spd = c.speed / 100;
+  else if (c.type === 'screw') spd = (c.slide ?? 100) / 100;
+  else if (c.type === 'digital') spd = (c.duty ?? 100) / 100;
+  ctx.ct = COMP[c.type] || COMP.single; ctx.ctype = c.type;
+  ctx.compRev = three && !!fx.compRev && ctx.ct.rot && !ctx.ct.drive;
   ctx.speed = spd * (fouling.compSpeed ?? 1) * (ctx.compRev ? 0.03 : 1);
   ctx.rvLeak = fx.rv === 'leakSmall' ? 0.08 : fx.rv === 'leakLarge' ? 0.2 : 0;
   ctx.pnc = 75 * (fx.nc || 0);                                  // psi of air partial pressure in the condenser
@@ -225,20 +240,24 @@ function cycle(ctx, x, detail) {
       wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
       dPd = (ctx.heat ? kv * mr * mr / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (mr / mN) ** 2;
       Pd = PcIn + pnc + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
-      etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
+      etaV = clamp(ctx.ct.eV(PR), 0.3, 0.97);
       m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
       mr = Math.max(1, m * (1 - fl));
     }
     shSuc = wet ? 0 : shS;
     hsucEff = wet ? F.hDew(Ps) : h1;
     h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
-    etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
-    if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
-    if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
+    etaIs = clamp(ctx.ct.eI(PR), 0.3, 0.785);
+    if (ctx.ct.drive) etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
+    if (ctx.ctype === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
+    if (ctx.ctype === 'screw') etaIs *= 0.7 + 0.3 * ctx.speed;          // slide valve unloading costs efficiency
     etaIs *= cfg.faults?.compEff ?? 1;
-    const etaMot = cfg.comp.type === 'inv' ? 0.88 : 0.9;
+    const etaMot = ctx.ct.drive ? 0.88 : 0.9;
     if (ctx.compRev) { Wel = 0.45 * (cfg.matched.Wnom || 2500) * 3.412; hDis = h1 + 28; }   // scroll turning backward: no pumping, little power, hot shell
-    else { Wel = m * (h2s - hsucEff) / etaIs / etaMot; hDis = h1 + Wel * (1 - 0.07) / m; }
+    else {
+      Wel = m * (h2s - hsucEff) / etaIs / etaMot; hDis = h1 + Wel * (1 - ctx.ct.shell) / m;
+      if (ctx.ctype === 'digital') { const d = Math.max(0.05, ctx.speed); Wel *= (d + 0.12 * (1 - d)) / d; }   // unloaded seconds still draw ~12%
+    }
   }
   SH = we > 0 ? F.shFromH(PeOut, hEo) : 0;
   // condenser
@@ -410,9 +429,9 @@ function electrical(cfg, ctx, c, running) {
   if (odOn) { const C = cfg.elec.fanCap * (cfg.faults?.fanCapPct ?? 1), Vc = V * 1.5; e.odFan.capV = Vc; e.odFan.capA = 377 * C * 1e-6 * Vc; e.odFan.capRated = cfg.elec.fanCap; e.odFan.capMeas = e.odFan.capA * 2652 / Vc; }
   // compressor
   const W = running && c ? c.Wel / 3.412 : 0;
-  const inv = cfg.comp.type === 'inv';
+  const inv = !!(COMP[cfg.comp.type] || {}).drive;
   const comp = { W, type: cfg.comp.type };
-  if (inv) { comp.A = W / (k3 * V * 0.97); comp.hz = Math.round(ctx.speed * 75); }
+  if (inv) { comp.A = W / (k3 * V * 0.97); comp.hz = Math.round(ctx.speed * (cfg.comp.type === 'invRotary' ? 90 : 75)); }
   else if (three) { comp.A = W / (k3 * V * pf); comp.L = [comp.A, comp.A * 1.01, comp.A * 0.99]; }
   else {
     const capPct = cfg.faults?.compCapPct ?? 1;
@@ -448,7 +467,7 @@ function match(cfg, FL) {
   const c = JSON.parse(JSON.stringify(cfg));
   c.faults = {}; c.blower.cfm = (COIL[c.indoor.type].cfmId || 400) * tons; c.blower.esp = 0.5; c.odFan.pct = 100;
   c.water = { gpm: 3 * tons, ewt: 86, fluid: 'water' }; c.idWater = { gpm: 3 * tons, ewt: 54, fluid: 'water' };
-  c.comp.stage = 'high'; c.comp.speed = 100;
+  c.comp.stage = 'high'; c.comp.speed = 100; c.comp.slide = 100; c.comp.duty = 100;
   const Pe = F.pDew(46), rhoS = F.vap(Pe, 10).rho;
   const dh = F.vap(Pe, 10).h - F.hLiqT(105);
   let mNom = Qn / dh;
@@ -500,6 +519,6 @@ function match(cfg, FL) {
   return m;
 }
 
-const API = { Fluid, Psy, COIL, WFLUID, isWater, lineIDs, defaultSwitches, buildCtx, cycle, solve, match, electrical, PATM, clamp };
+const API = { Fluid, Psy, COIL, COMP, WFLUID, isWater, lineIDs, defaultSwitches, buildCtx, cycle, solve, match, electrical, PATM, clamp };
 if (typeof module !== 'undefined') module.exports = API; else root.HPEngine = API;
 })(this);

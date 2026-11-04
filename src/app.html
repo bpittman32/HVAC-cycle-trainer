@@ -240,7 +240,7 @@ function defaults(){
   return {refrigerant:'R-410A',tons:3,mode:'cool',chargeMode:'realistic',shTarget:10,scTarget:10,lineLen:25,
     indoor:{type:'tf',size:100,meter:'txv',txvSet:6,piston:0,eevSH:8},
     outdoor:{type:'tf',size:100,meter:'txv',txvSet:5,piston:0,eevSH:6},
-    comp:{type:'single',stage:'high',speed:100},blower:{type:'ecm',cfm:1200,esp:0.5},odFan:{pct:100},
+    comp:{type:'single',stage:'high',speed:100,slide:100,duty:100},blower:{type:'ecm',cfm:1200,esp:0.5},odFan:{pct:100},
     water:{gpm:9,ewt:86,fluid:'water'},idWater:{gpm:9,ewt:54,fluid:'water'},cond:{idDB:80,idWB:67,odDB:95,odWB:75},
     elec:{volts:230,compCap:35,fanCap:5,blowerCap:7.5,phase:1,nomV:230},blowerOn:true,faults:{},sw:null,charge:null,matched:null,
     savedCond:{cool:{idDB:80,idWB:67,odDB:95,odWB:75,ewt:86,idEwt:54},heat:{idDB:70,idWB:60,odDB:47,odWB:43,ewt:68,idEwt:104}}};
@@ -371,8 +371,13 @@ function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t
 function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k === 'Tdis') return 120; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
 function trip(kind, why){ S.comp = false; S.trip = kind; S.tripWhy = why; S.asc = cfg.sw.asc; S.trips++; logEvent(`${kind} trip — ${why}. Compressor stopped; anti-short-cycle ${cfg.sw.asc}s.`, 'bad');
   if (S.trips >= cfg.sw.maxTrips) { S.lock = true; logEvent(`Control LOCKOUT after ${S.trips} trips. Find the cause, then press Reset control.`, 'bad'); } }
-function tick(dtReal){
-  const dt = dtReal * S.speed; S.t += dt;
+function tick(dtReal){        // physics in sub-steps of at most 0.5 s so fast-forward doesn't alias pulses or lags
+  const tot = dtReal * S.speed, n = Math.max(1, Math.ceil(tot / 0.5));
+  for (let i = 0; i < n; i++) step(tot / n);
+  renderTiles(); renderStatus(); updateSchemLive();
+}
+function step(dt){
+  S.t += dt;
   if (S.asc > 0) S.asc = Math.max(0, S.asc - dt);
   const sw = cfg.sw;
   if (S.trip === 'HPS' && g(disp.Pd) <= sw.hpsClose) { logEvent('High-pressure switch closed again (auto reset).'); S.trip = null; }
@@ -392,11 +397,17 @@ function tick(dtReal){
     else if (sw.fzOn !== false && odW() && disp.lwtOd <= sw.fzOd) { S.tripSide = 'od'; trip('FRZ', `${roleOf('od').toLowerCase()} leaving ${E.WFLUID[cfg.water.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtOd)}°F (cut-out ${sw.fzOd}°F)`); }
   }
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
-  if (S.comp && res.ctx.compRev) {        // scroll turning backward: no pumping, low amps, hot shell
+  if (S.comp && res.ctx.compRev) {        // scroll or screw turning backward: no pumping, low amps, hot shell
     const o = offVM(); o.amps = elecRes.comp.A; o.kw = elecRes.totalW / 1000; o.Tdis = (odW() ? cfg.water.ewt : cfg.cond.odDB) + 230; o.COP = 0; tgt = o;
   }
   const hunt = S.comp && res.ctx.txvFault === 'hunting' && (res.ctx.heat ? cfg.outdoor : cfg.indoor).meter === 'txv';
   if (hunt) { const w = Math.sin(2 * Math.PI * S.t / 50); tgt.lowP += 14 * w; tgt.Ps += 14 * w; tgt.P8 += 14 * w; tgt.P9 += 14 * w; tgt.SH -= 14 * w; tgt.Tsuc -= 9 * w; tgt.T7 -= 9 * w; tgt.T8 -= 9 * w; tgt.T9 -= 9 * w; tgt.amps += 0.5 * w; }
+  if (pulsing()) {            // average comes from the model; split it into loaded and unloaded seconds
+    const d = cfg.comp.duty / 100, Al = tgt.amps / (d + 0.35 * (1 - d));      // time-average of loaded and unloaded amps = model amps
+    const ld = pulseLoaded(), sw2 = ld ? (1 - d) : -d;
+    tgt.amps = ld ? Al : 0.35 * Al;
+    tgt.lowP -= 3 * sw2; tgt.Ps -= 3 * sw2; tgt.P8 -= 3 * sw2; tgt.P9 -= 3 * sw2; tgt.highP += 4 * sw2; tgt.Pd += 4 * sw2; tgt.P1 += 4 * sw2;
+  }
   if (S.comp && res.beyond) { tgt.Pd = PATM + sw.hpsOpen + 70; tgt.highP = tgt.Pd - 5; tgt.P1 = tgt.Pd; }
   if (S.comp && res.collapse) { tgt.Ps = Math.max(F().Pmin, PATM + sw.lpsOpen - 10); tgt.lowP = tgt.Ps + 1; tgt.P9 = tgt.Ps; }
   for (const k in tgt) {
@@ -406,7 +417,6 @@ function tick(dtReal){
     disp[k] = b + (a - b) * (1 - Math.exp(-dt / tau(k)));
   }
   histRecord(S.t, disp);
-  renderTiles(); renderStatus(); updateSchemLive();
 }
 
 /* ---------- tiles ---------- */
@@ -432,12 +442,15 @@ function renderTiles(){
   const STAB = [['lowP','Low side',2,'psi'],['highP','High side',2,'psi'],['SH','Superheat',1,'°F'],['SC','Subcooling',1,'°F'],['Tdis','Discharge temp',2,'°F'],['amps','Compressor amps',0.2,'A']];
   let worst = null;
   if (S.comp) {
-    const n = HIST.t.length, tNow = S.t;
+    const n = HIST.t.length, tNow = S.t, pulse = pulsing();
     if (S.tRun < 60 || n < 2 || HIST.t[0] > tNow - 60) worst = {label: 'Unit just started', d: null};
     else {
       let i0 = n - 1; while (i0 > 0 && HIST.t[i0 - 1] >= tNow - 60) i0--;
       for (const [k, lbl, tol, u] of STAB) {
         const a = HIST.v[k] || []; let lo = Infinity, hi = -Infinity;
+        if (pulse) {      // digital scroll: judge the 15-second averages, not the pulses
+          for (let b = 0; b < 4; b++) { let sum = 0, cnt = 0; for (let i = i0; i < n; i++) { const tb = Math.floor((tNow - HIST.t[i]) / 15); if (tb === b && isFinite(a[i])) { sum += a[i]; cnt++; } } if (cnt) { const m = sum / cnt; lo = Math.min(lo, m); hi = Math.max(hi, m); } }
+        } else
         for (let i = i0; i < n; i++) if (isFinite(a[i])) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
         if (isFinite(lo) && hi - lo > tol && (!worst || (hi - lo) / tol > worst.r)) worst = {label: lbl, d: hi - lo, u, r: (hi - lo) / tol, tol};
       }
@@ -445,7 +458,7 @@ function renderTiles(){
   }
   const unsettled = !!worst;
   const st = $('settle');
-  st.textContent = !S.comp ? 'Compressor off.' : !unsettled ? 'Stable — readings held steady for the last minute.'
+  st.textContent = !S.comp ? 'Compressor off.' : !unsettled ? 'Stable — readings held steady for the last minute.' + (pulsing() ? ' (Judged on 15-second averages — the digital scroll pulses.)' : '')
     : worst.d == null ? 'Settling — the unit just started. Wait at least a minute of steady readings before recording.'
     : `Settling — ${worst.label.toLowerCase()} moved ${worst.d.toFixed(1)} ${worst.u} in the last minute (stable is under ${worst.tol} ${worst.u}). Wait before recording.`;
   st.className = 'settle ' + (unsettled ? 'moving' : S.comp ? 'steady' : '');
@@ -643,10 +656,12 @@ function renderProbe(){
     const id = selected.id, a = r.air;
     if (id === 'comp') {
       const c = e.comp;
-      h = `<h3>Compressor · ${c.type === 'inv' ? 'inverter scroll' : c.type === 'two' ? 'two-stage scroll' : 'single-speed scroll'}</h3>` + kv([
-        ...(c.three && c.type !== 'inv' ? [['L1 amps', on ? f1(disp.amps) + ' A' : '0 A'], ['L2 amps', on ? f1(disp.amps * 1.01) + ' A' : '0 A'], ['L3 amps', on ? f1(disp.amps * 0.99) + ' A' : '0 A']] : [['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A']]), c.type !== 'inv' && !c.three && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], c.type !== 'inv' && !c.three && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
+      h = `<h3>Compressor · ${E.COMP[c.type].name.toLowerCase()}</h3>` + kv([
+        ...(c.three && !isDrive() ? [['L1 amps', on ? f1(disp.amps) + ' A' : '0 A'], ['L2 amps', on ? f1(disp.amps * 1.01) + ' A' : '0 A'], ['L3 amps', on ? f1(disp.amps * 0.99) + ' A' : '0 A']] : [['Common (C) amps', on ? f1(disp.amps) + ' A' : '0 A']]), !isDrive() && !c.three && ['Run winding (R) amps', on ? f1(c.R) + ' A' : '0 A'], !isDrive() && !c.three && ['Start winding (S) amps', on ? f1(c.S) + ' A' : '0 A'],
         ['Line voltage', f0(e.V) + ' V'], ['Power', on ? f0(c.W) + ' W' : '0 W'], ['RLA / LRA', `${c.RLA} / ${c.LRA}`],
-        c.type === 'inv' && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
+        isDrive() && ['Drive speed', on ? c.hz + ' Hz' : '0 Hz'],
+        cfg.comp.type === 'screw' && ['Slide valve', `${cfg.comp.slide ?? 100}% loaded`],
+        cfg.comp.type === 'digital' && ['Digital duty', on ? `${cfg.comp.duty ?? 100}% · ${pulseLoaded() ? 'LOADED' : 'unloaded'}` : '—'],
         ['Suction', fmtP(disp.Ps)], ['Discharge', fmtP(disp.Pd)], ['Compression ratio', on ? (r.PR).toFixed(2) : '—'],
         ['Discharge temp', f0(disp.Tdis) + '°F'], ['Mass flow', on ? f0(r.m) + ' lb/h' : '0'], ['Volumetric eff.', on ? (r.etaV*100).toFixed(0)+'%' : '—'],
         ['Isentropic eff.', on ? (r.etaIs*100).toFixed(0)+'%' : '—'], ['Suction gas', on ? (r.wet ? 'LIQUID FLOODBACK' : r.shSuc.toFixed(1)+'°F SH') : '—'],
@@ -736,6 +751,9 @@ function renderAlerts(){
   if (g(r.Ps) < 0) A.push(['bad', `Suction is in a vacuum (${fmtP(r.Ps)}).`]);
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves it ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback to the compressor.`]);
+  if (r.ze < 0 && cfg.comp.type === 'recip') A.push(['bad', 'Reciprocating compressors cannot compress liquid — floodback here risks broken valves and connecting rods (liquid slugging).']);
+  if (cfg.comp.type === 'recip' && r.PR > 7) A.push(['warn', `Compression ratio ${r.PR.toFixed(1)} is high for a reciprocating compressor — re-expansion from the clearance volume is cutting its pumping (volumetric efficiency ${(r.etaV*100).toFixed(0)}%).`]);
+  if (cfg.comp.type === 'screw' && (cfg.comp.slide ?? 100) < 50) A.push(['info', `Screw slide valve at ${cfg.comp.slide}% — part-load efficiency of a slide valve falls off well below the inverter's.`]);
   if (r.disSt.T > 250) A.push(['bad', `Discharge ${f0(r.disSt.T)}°F — oil breakdown territory (limit ~225–250°F at the line).`]);
   else if (r.disSt.T > 225) A.push(['warn', `Discharge ${f0(r.disSt.T)}°F — running hot.`]);
   if (r.wet && r.ze >= 0) A.push(['warn', 'Wet suction gas reaching the compressor — discharge superheat is near zero.']);
@@ -832,9 +850,11 @@ function buildControls(){
     num('odPis','Outdoor piston bore','in',0.030,0.120,0.001, () => cfg.outdoor.piston || cfg.matched.out.piston, v => cfg.outdoor.piston = v, {hide: () => cfg.outdoor.meter !== 'piston', dec:3}) +
     `<div class="note">The active device is the one on the evaporator side: indoor in cooling, outdoor in heating. Turning a TXV adjusting stem changes its static superheat; operating superheat sits a few degrees above it.</div>`);
   h += grp('Compressor',
-    sel('ctype','Type', [['single','Single-speed scroll'],['two','Two-stage scroll'],['inv','Inverter (variable speed)']], () => cfg.comp.type, v => cfg.comp.type = v) +
+    sel('ctype','Type', [['single','Scroll, single-speed'],['two','Scroll, two-stage'],['inv','Scroll, inverter (variable speed)'],['digital','Digital scroll (pulse unloading)'],['recip','Reciprocating (piston)'],['rotary','Rotary (rolling piston)'],['invRotary','Rotary, inverter (variable speed)'],['screw','Screw with slide valve (three-phase)']], () => cfg.comp.type, v => { cfg.comp.type = v; if (v === 'screw' && cfg.elec.phase !== 3) { cfg.elec.phase = 3; cfg.elec.nomV = 460; cfg.elec.volts = 460; logEvent('Screw compressors run on three-phase power — supply switched to three-phase 460 V.'); } if (E.COMP[v].drive) cfg.faults.compRev = false; }) +
     sel('cstage','Stage', [['high','High (100%)'],['low','Low (67%)']], () => cfg.comp.stage, v => cfg.comp.stage = v, {hide: () => cfg.comp.type !== 'two'}) +
-    num('cspd','Inverter speed','%',30,120,1, () => cfg.comp.speed, v => cfg.comp.speed = v, {hide: () => cfg.comp.type !== 'inv'}));
+    num('cspd','Inverter speed','%',30,120,1, () => cfg.comp.speed, v => cfg.comp.speed = v, {hide: () => !isDrive()}) +
+    num('cslide','Slide valve position','%',25,100,1, () => cfg.comp.slide ?? 100, v => cfg.comp.slide = v, {hide: () => cfg.comp.type !== 'screw'}) +
+    num('cduty','Digital duty cycle','%',10,100,1, () => cfg.comp.duty ?? 100, v => cfg.comp.duty = v, {hide: () => cfg.comp.type !== 'digital'}));
   h += grp('Heat exchangers',
     sel('idType','Indoor heat exchanger', [['tf','Tube & fin (air)'],['mc','Microchannel (air)'],['water','Coaxial (water)'],['shell','Shell & tube (water)'],['plate','Brazed plate (water)']], () => cfg.indoor.type, v => { cfg.indoor.type = v; logEvent('Indoor heat exchanger changed — charge NOT adjusted. Re-match to restore factory charge.'); }) +
     num('idSize','Indoor heat exchanger size','%',50,160,5, () => cfg.indoor.size, v => cfg.indoor.size = v) +
@@ -861,7 +881,7 @@ function buildControls(){
     `<div class="note" id="fzNote"></div>` +
     `<button class="btn" id="swDefault">Restore default switch settings</button>`);
   h += grp('Electrical supply',
-    sel('supply','Power supply', [['1-230','Single-phase 208/230 V'],['3-230','Three-phase 208/230 V'],['3-460','Three-phase 460 V']], () => `${cfg.elec.phase}-${cfg.elec.nomV}`, v => { const [ph, nv] = v.split('-').map(Number); cfg.elec.phase = ph; cfg.elec.nomV = nv; cfg.elec.volts = nv; if (ph === 1) { cfg.faults.compRev = false; cfg.faults.odFanRev = false; cfg.faults.blowerRev = false; } }) +
+    sel('supply','Power supply', [['1-230','Single-phase 208/230 V'],['3-230','Three-phase 208/230 V'],['3-460','Three-phase 460 V']], () => `${cfg.elec.phase}-${cfg.elec.nomV}`, v => { const [ph, nv] = v.split('-').map(Number); if (ph === 1 && cfg.comp.type === 'screw') { cfg.comp.type = 'single'; logEvent('Screw compressors need three-phase power — compressor changed to a single-speed scroll.'); } cfg.elec.phase = ph; cfg.elec.nomV = nv; cfg.elec.volts = nv; if (ph === 1) { cfg.faults.compRev = false; cfg.faults.odFanRev = false; cfg.faults.blowerRev = false; } }) +
     num('volts','Line voltage','V',150,560,1, () => cfg.elec.volts, v => cfg.elec.volts = v, {minmax: () => [Math.round(cfg.elec.nomV * 0.8), Math.round(cfg.elec.nomV * 1.15)]}));
   const FH = () => cfg.faultsHidden, three = () => cfg.elec.phase === 3;
   const TXVF = [['','Working normally'],['stuckOpen','Stuck open'],['stuckPartial','Stuck partly closed'],['lostCharge','Lost bulb charge (fails closed)'],['looseBulb','Loose / uninsulated bulb'],['hunting','Hunting']];
@@ -872,7 +892,7 @@ function buildControls(){
     sel('fIdTxv','Indoor TXV condition', TXVF, () => cfg.faults.idTxv || '', v => cfg.faults.idTxv = v, {secret: true, hide: () => FH() || cfg.indoor.meter !== 'txv'}) +
     sel('fOdTxv','Outdoor TXV condition', TXVF, () => cfg.faults.odTxv || '', v => cfg.faults.odTxv = v, {secret: true, hide: () => FH() || cfg.outdoor.meter !== 'txv'}) +
     sel('fRv','Reversing valve condition', [['','Working normally'],['stuckCool','Stuck in cooling position'],['stuckHeat','Stuck in heating position'],['leakSmall','Leaking internally (small)'],['leakLarge','Leaking internally (large)']], () => cfg.faults.rv || '', v => cfg.faults.rv = v, {secret: true, hide: FH}) +
-    sel('fComp','Compressor wiring', WIRE, () => cfg.faults.compRev ? 'rev' : '', v => cfg.faults.compRev = v === 'rev', {secret: true, hide: () => FH() || !three() || cfg.comp.type === 'inv'}) +
+    sel('fComp','Compressor wiring', WIRE, () => cfg.faults.compRev ? 'rev' : '', v => cfg.faults.compRev = v === 'rev', {secret: true, hide: () => FH() || !three() || isDrive()}) +
     sel('fOdFan','Outdoor fan wiring', WIRE, () => cfg.faults.odFanRev ? 'rev' : '', v => cfg.faults.odFanRev = v === 'rev', {secret: true, hide: () => FH() || !three() || odW()}) +
     sel('fBlower','Blower wiring', WIRE, () => cfg.faults.blowerRev ? 'rev' : '', v => cfg.faults.blowerRev = v === 'rev', {secret: true, hide: () => FH() || !three() || idW()}));
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
@@ -903,12 +923,17 @@ function buildControls(){
 function testSets(){ return unitTestSets(idW(), odW(), cfg.tons).map(k => [k, TESTSETS[k]]); }
 function loadSettings(load){
   const c = cfg.comp, t = c.type;
-  if (load === 'full') return t === 'two' ? {stage:'high'} : t === 'inv' ? {speed:100} : {};
-  if (load === 'low') return t === 'two' ? {stage:'low'} : t === 'inv' ? {speed:40} : {};
-  if (load === 'int') return t === 'inv' ? {speed:70} : t === 'two' ? {stage:'high'} : {};
-  const pct = +load; return t === 'two' ? {stage: pct > 60 ? 'high' : 'low'} : t === 'inv' ? {speed: Math.max(30, pct)} : {};
+  const drv = E.COMP[t].drive;
+  if (load === 'full') return t === 'two' ? {stage:'high'} : drv ? {speed:100} : t === 'screw' ? {slide:100} : t === 'digital' ? {duty:100} : {};
+  if (load === 'low') return t === 'two' ? {stage:'low'} : drv ? {speed:40} : t === 'screw' ? {slide:35} : t === 'digital' ? {duty:40} : {};
+  if (load === 'int') return drv ? {speed:70} : t === 'two' ? {stage:'high'} : t === 'screw' ? {slide:70} : t === 'digital' ? {duty:70} : {};
+  const pct = +load; return t === 'two' ? {stage: pct > 60 ? 'high' : 'low'} : drv ? {speed: Math.max(30, pct)} : t === 'screw' ? {slide: Math.max(25, pct)} : t === 'digital' ? {duty: Math.max(10, pct)} : {};
 }
-function testVisible(t){ if (t.staged && cfg.comp.type === 'single') return false; if (t.variable && cfg.comp.type !== 'inv') return false; return true; }
+function testVisible(t){ const ty = cfg.comp.type; if (t.staged && !['two','inv','invRotary','screw','digital'].includes(ty)) return false; if (t.variable && !['inv','invRotary','screw','digital'].includes(ty)) return false; return true; }
+function isDrive(){ return !!E.COMP[cfg.comp.type].drive; }
+/* digital scroll: 15 s cycle, loaded for duty% of it */
+function pulsing(){ return S.comp && cfg.comp.type === 'digital' && (cfg.comp.duty ?? 100) < 100 && !res.ctx.compRev; }
+function pulseLoaded(){ if (!pulsing()) return true; return (S.tRun % 15) < 15 * cfg.comp.duty / 100; }
 function testMatches(t){
   if (t.mode !== cfg.mode) return false;
   const near = (a, b) => Math.abs(a - b) < 0.05;
@@ -1032,8 +1057,8 @@ function renderElec(){
   const e = elecRes, on = S.comp, c = e.comp, bOn = S.call && cfg.blowerOn;
   let h = `<h2>Outdoor unit</h2>` + kv([
     ['Supply', cfg.elec.phase === 3 ? `three-phase ${cfg.elec.nomV} V` : 'single-phase 230 V'], ['Line voltage L1–L2', f0(e.V) + ' V'], ['Unit total', on ? f1(e.odUnitA) + ' A' : '0.0 A'],
-    ...(c.three && c.type !== 'inv' ? [['Compressor L1', on ? f1(disp.amps) + ' A' : '0.0 A'], ['Compressor L2', on ? f1(disp.amps * 1.01) + ' A' : '0.0 A'], ['Compressor L3', on ? f1(disp.amps * 0.99) + ' A' : '0.0 A']] : [['Compressor common (C)', on ? f1(disp.amps) + ' A' : '0.0 A']]), c.type !== 'inv' && !c.three && ['Compressor run winding (R)', on ? f1(c.R) + ' A' : '0.0 A'], c.type !== 'inv' && !c.three && ['Compressor start winding (S)', on ? f1(c.S) + ' A' : '0.0 A'],
-    ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], c.type === 'inv' && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
+    ...(c.three && !isDrive() ? [['Compressor L1', on ? f1(disp.amps) + ' A' : '0.0 A'], ['Compressor L2', on ? f1(disp.amps * 1.01) + ' A' : '0.0 A'], ['Compressor L3', on ? f1(disp.amps * 0.99) + ' A' : '0.0 A']] : [['Compressor common (C)', on ? f1(disp.amps) + ' A' : '0.0 A']]), !isDrive() && !c.three && ['Compressor run winding (R)', on ? f1(c.R) + ' A' : '0.0 A'], !isDrive() && !c.three && ['Compressor start winding (S)', on ? f1(c.S) + ' A' : '0.0 A'],
+    ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], isDrive() && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
     !odW() && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
   ]);
   h += `<h2 style="margin-top:12px">Indoor unit</h2>` + kv([
@@ -1169,6 +1194,7 @@ if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());
 if (cfg.sw && cfg.sw.asc === 300) cfg.sw.asc = 30;   // older saved default
 if (!cfg.water.fluid) cfg.water.fluid = 'water';
 if (!cfg.elec.phase) { cfg.elec.phase = 1; cfg.elec.nomV = 230; }
+if (cfg.comp.slide == null) cfg.comp.slide = 100; if (cfg.comp.duty == null) cfg.comp.duty = 100; if (!E.COMP[cfg.comp.type]) cfg.comp.type = 'single';
 if (!cfg.faults) cfg.faults = {};
 ensureFz();
 for (const m of ['cool','heat']) if (cfg.savedCond[m].idEwt == null) cfg.savedCond[m].idEwt = m === 'cool' ? 54 : 104;
