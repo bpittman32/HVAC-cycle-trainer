@@ -1,10 +1,10 @@
 /* ---------- trend history & charts ---------- */
-const HIST_MAX = 5400;                       // 3 h of simulated time at 2 s
+const HIST_MAX = 3600;                       // 1 h of simulated time at 1 s
 const HIST = { t: [], v: {} };
 const TREND_COLORS = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'];
 let histAcc = 0;
 function histRecord(t, d, force) {
-  if (!force && t - (HIST.t[HIST.t.length - 1] ?? -1e9) < 2) return;
+  if (!force && t - (HIST.t[HIST.t.length - 1] ?? -1e9) < 1) return;
   HIST.t.push(t);
   const keys = ['lowP','highP','Tsuc','Tliq','Tdis','SH','SC','amps','Ps','Pd'];
   for (let i = 1; i <= 9; i++) keys.push('P' + i, 'T' + i);

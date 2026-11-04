@@ -170,7 +170,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.5.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.5.1</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -1934,12 +1934,12 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 window.addEventListener('resize', () => drawPH());
 
 /* ---------- trend history & charts ---------- */
-const HIST_MAX = 5400;                       // 3 h of simulated time at 2 s
+const HIST_MAX = 3600;                       // 1 h of simulated time at 1 s
 const HIST = { t: [], v: {} };
 const TREND_COLORS = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'];
 let histAcc = 0;
 function histRecord(t, d, force) {
-  if (!force && t - (HIST.t[HIST.t.length - 1] ?? -1e9) < 2) return;
+  if (!force && t - (HIST.t[HIST.t.length - 1] ?? -1e9) < 1) return;
   HIST.t.push(t);
   const keys = ['lowP','highP','Tsuc','Tliq','Tdis','SH','SC','amps','Ps','Pd'];
   for (let i = 1; i <= 9; i++) keys.push('P' + i, 'T' + i);
@@ -2113,7 +2113,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.5.0 started at steady state.');
+logEvent('Simulator v1.5.1 started at steady state.');
 histRecord(S.t, disp, true);
 setupTrendsTab();
 renderAll();

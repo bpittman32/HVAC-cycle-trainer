@@ -22,7 +22,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - High/low pressure switches with trips, anti-short-cycle and lockout
 - Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart
-- Trend charts: every port's pressure and temperature (plus gauge readings) recorded over simulated time; chart one point from its readings panel or overlay up to eight on the Trends tab
+- Trend charts: every port's pressure and temperature (plus gauge readings) recorded every second of simulated time (last hour kept); chart one point from its readings panel or overlay up to eight on the Trends tab
 
 ## Project layout
 
