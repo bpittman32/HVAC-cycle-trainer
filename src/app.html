@@ -108,6 +108,14 @@ th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;white
 th{font-family:var(--f-disp);font-weight:600;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;font-size:12px}
 td:first-child,th:first-child{text-align:left}
 td.n{font-family:var(--f-num)}
+table.ports{font-size:12.5px}
+table.ports th,table.ports td{padding:5px 4px}
+table.ports small{color:var(--muted);font-size:10px}
+table.ports td:first-child{white-space:normal}
+#tab-readings td:first-child{white-space:normal}
+@media(min-width:820px){#tab-readings .kv,#tab-elec .kv{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#tab-readings .kv b,#tab-elec .kv b{white-space:nowrap}
+.ports .dot{margin-right:4px}
 .dot{display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);font-family:var(--f-num);font-size:11px;text-align:center;line-height:16px;margin-right:6px}
 canvas{width:100%;display:block;background:var(--panel2);border-radius:10px}
 .bar{height:10px;border-radius:5px;background:var(--bg);overflow:hidden;display:flex}
@@ -345,6 +353,10 @@ function airSide(r){
 }
 
 /* Port states by physical position (1..9) */
+const PORTSHORT = {
+  cool: ['Discharge','OD coil in','OD coil out','Liquid SV','ID meter in','ID coil in','ID coil out','Vapor SV','Suction'],
+  heat: ['Discharge','OD coil out','OD coil in','Liquid SV','ID liquid out','ID coil out','ID coil in','Vapor SV','Suction']
+};
 const PORTNAMES = {
   cool: ['Compressor discharge','Outdoor coil inlet (from reversing valve)','Outdoor coil outlet','Liquid line service valve','Indoor metering device inlet','Indoor coil inlet (after metering)','Indoor coil outlet','Vapor line service valve','Compressor suction (after accumulator)'],
   heat: ['Compressor discharge','Outdoor coil outlet (to reversing valve)','Outdoor coil inlet (after metering)','Liquid line service valve','Indoor coil outlet liquid (check valve bypass)','Indoor coil outlet','Indoor coil inlet (hot gas)','Vapor line service valve (hot gas)','Compressor suction (after accumulator)']
@@ -778,14 +790,14 @@ function buildControls(){
   CTL.length = 0;
   let h = '';
   h += grp('Test conditions', `<div id="presets"></div>` +
-    num('idDB','Indoor dry bulb','°F',55,95,1, () => cfg.cond.idDB, v => cfg.cond.idDB = v, {hide: () => idW()}) +
-    num('idWB','Indoor wet bulb','°F',40,80,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB), {hide: () => idW()}) +
-    num('idEwt','Load-side entering water','°F',35,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
+    num('idDB','Indoor dry bulb','°F',-30,130,1, () => cfg.cond.idDB, v => { cfg.cond.idDB = v; cfg.cond.idWB = Math.min(cfg.cond.idWB, v); }, {hide: () => idW()}) +
+    num('idWB','Indoor wet bulb','°F',-30,130,1, () => cfg.cond.idWB, v => cfg.cond.idWB = Math.min(v, cfg.cond.idDB), {hide: () => idW()}) +
+    num('idEwt','Load-side entering water','°F',-30,130,1, () => cfg.idWater.ewt, v => cfg.idWater.ewt = v, {hide: () => !idW()}) +
     num('idGpm','Load-side flow','gpm',0.5,60,0.5, () => cfg.idWater.gpm, v => cfg.idWater.gpm = v, {hide: () => !idW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
     sel('idFluid','Load-side fluid', FLUIDOPTS, () => cfg.idWater.fluid || 'water', v => cfg.idWater.fluid = v, {hide: () => !idW()}) +
-    num('odDB','Outdoor dry bulb','°F',-10,125,1, () => cfg.cond.odDB, v => cfg.cond.odDB = v, {hide: () => odW()}) +
-    num('odWB','Outdoor wet bulb','°F',-12,85,1, () => cfg.cond.odWB, v => cfg.cond.odWB = Math.min(v, cfg.cond.odDB), {hide: () => odW()}) +
-    num('ewt','Source-side entering water','°F',25,110,1, () => cfg.water.ewt, v => cfg.water.ewt = v, {hide: () => !odW()}) +
+    num('odDB','Outdoor dry bulb','°F',-30,130,1, () => cfg.cond.odDB, v => { cfg.cond.odDB = v; cfg.cond.odWB = Math.min(cfg.cond.odWB, v); }, {hide: () => odW()}) +
+    num('odWB','Outdoor wet bulb','°F',-30,130,1, () => cfg.cond.odWB, v => cfg.cond.odWB = Math.min(v, cfg.cond.odDB), {hide: () => odW()}) +
+    num('ewt','Source-side entering water','°F',-30,130,1, () => cfg.water.ewt, v => cfg.water.ewt = v, {hide: () => !odW()}) +
     num('gpm','Source-side flow','gpm',0.5,60,0.5, () => cfg.water.gpm, v => cfg.water.gpm = v, {hide: () => !odW(), minmax: () => [0.5, Math.max(20, 6*cfg.tons)]}) +
     sel('odFluid','Source-side fluid', FLUIDOPTS, () => cfg.water.fluid || 'water', v => cfg.water.fluid = v, {hide: () => !odW()}), true);
   h += grp('Refrigerant & charge',
@@ -914,15 +926,17 @@ function syncControls(){
 /* ---------- readings & electrical & P-h ---------- */
 function renderReadings(){
   const r = res, a = r.air, heat = cfg.mode === 'heat', on = S.comp;
-  let h = '<h2>Refrigerant ports</h2><div class="tw"><table><tr><th>Port</th><th>Pressure</th><th>Temp</th><th>Sat °F</th><th>Condition</th><th>h, Btu/lb</th></tr>';
+  const short = PORTSHORT[heat ? 'heat' : 'cool'];
+  let h = '<h2>Refrigerant ports</h2><div class="tw"><table class="ports"><tr><th>Port</th><th>Pressure</th><th>°F</th><th>Sat °F</th><th>State</th><th>h</th></tr>';
   for (const p of r.points) {
     const sat = p.phase === 'liq' ? p.tb : p.phase === 'vap' ? p.td : null;
-    h += `<tr><td><span class="dot">${p.i}</span>${esc(p.name)}</td><td class="n">${on ? fmtP(p.P) : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? f1(p.tb)+'–'+f1(p.td) : f1(sat)) : '—'}</td><td>${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vapor') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
+    const pv = fmtPv(p.P);
+    h += `<tr title="${esc(p.name)}"><td><span class="dot">${p.i}</span>${esc(short[p.i-1])}</td><td class="n">${on ? pv[0] + '<small> ' + pv[1] + '</small>' : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? (p.td - p.tb < 0.6 ? f1(p.tb) : f0(p.tb)+'–'+f0(p.td)) : f1(sat)) : '—'}</td><td class="n">${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vap') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
   }
   h += '</table></div>';
   const airRow = (lbl, A) => A.kind === 'air'
     ? `<tr><td>${lbl} in</td><td class="n">${f1(A.in.db)}</td><td class="n">${f1(A.in.wb)}</td><td class="n">${f0(A.in.rh)}%</td><td class="n">${f1(A.in.dp)}</td><td class="n">${f1(A.in.gr)}</td><td class="n">${A.in.h.toFixed(2)}</td></tr><tr><td>${lbl} out</td><td class="n">${on?f1(A.out.db):'—'}</td><td class="n">${on?f1(A.out.wb):'—'}</td><td class="n">${on?f0(A.out.rh)+'%':'—'}</td><td class="n">${on?f1(A.out.dp):'—'}</td><td class="n">${on?f1(A.out.gr):'—'}</td><td class="n">${on?A.out.h.toFixed(2):'—'}</td></tr>`
-    : `<tr><td>${lbl} ${A.fluid.name.toLowerCase()} in / out</td><td class="n" colspan="6" style="text-align:left">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
+    : `<tr><td>${lbl} ${A.fluid.name.toLowerCase()} in / out</td><td class="n" colspan="6" style="text-align:left;white-space:normal">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
   h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h, Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
   const Qref = heat ? a.Qc : a.Qe;
   const IA = a.indoor, st = heat ? r.ctx.cond.stream : r.ctx.evap.stream;
@@ -944,7 +958,7 @@ function renderReadings(){
     ['Δh', on ? Math.abs(rh[0] - rh[1]).toFixed(1) + ' Btu/lb' : '—'],
     ['Capacity', on ? f0(Qref) + ' Btu/h' : '—'],
   ]) + '<p class="hint">Capacity = mass flow × Δh on each side. Air enthalpy is per lb of dry air.</p><h2 style="margin-top:14px">Heat balance & split</h2>' + kv([
-    ['Heat balance', on ? (Math.abs(airQ - Qref) / Qref * 100 < 0.05 ? '0.0' : ((airQ - Qref) / Qref * 100).toFixed(1)) + '% (ASHRAE 37 limit ±6%)' : '—'],
+    ['Heat balance', on ? (Math.abs(airQ - Qref) / Qref * 100 < 0.05 ? '0.0' : ((airQ - Qref) / Qref * 100).toFixed(1)) + '% (limit ±6%)' : '—'],
     !heat && ev.kind === 'air' && ['Sensible', on ? f0(ev.sens) + ' Btu/h' : '—'],
     !heat && ev.kind === 'air' && ['Latent', on ? f0(ev.lat) + ' Btu/h' : '—'],
     !heat && ev.kind === 'air' && ['SHR', on ? (ev.sens / a.Qe).toFixed(2) : '—'],

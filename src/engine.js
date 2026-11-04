@@ -209,7 +209,7 @@ function cycle(ctx, x, detail) {
     const st = F.state(Ps, hEo);
     wet = st.phase !== 'vap'; shS = st.sh; rhoS = st.rho;
     dPd = (ctx.heat ? kv * m * m / (F.rhoDew(PcIn) * 0.85) : 0) + 1.0 * (m / mN) ** 2;
-    Pd = PcIn + dPd; PR = Pd / Ps;
+    Pd = PcIn + dPd; PR = Math.max(1.05, Pd / Ps);   // compressor always builds some lift
     etaV = clamp(0.985 - 0.014 * PR, 0.3, 0.97);
     m = Math.max(1, rhoS * ctx.disp * ctx.speed * etaV);
   }
@@ -217,7 +217,7 @@ function cycle(ctx, x, detail) {
   // compression
   const h1 = hEo, shSuc = wet ? 0 : shS;
   const hsucEff = wet ? F.hDew(Ps) : h1;
-  const h2s = F.isenH(Ps, shSuc, Pd);
+  const h2s = Math.max(F.isenH(Ps, shSuc, Math.max(Pd, Ps * 1.05)), hsucEff + 0.5);
   let etaIs = clamp(0.78 - 0.022 * (PR - 2.9) ** 2, 0.3, 0.785);
   if (cfg.comp.type === 'inv') etaIs *= 1 - 0.18 * (ctx.speed - 0.85) ** 2;
   if (cfg.comp.type === 'two' && ctx.speed < 0.9) etaIs *= 0.97;
@@ -360,7 +360,7 @@ function solveCtx(ctx, guess) {
   const bounds = [[F.Tmin + 3, Tei - 0.3], [Tci + 0.3, F.Tmax - 1.5], [-94, 98], [-50, 98]];
   const starts = [];
   if (guess) starts.push(guess);
-  starts.push([Tei - 30, Tci + 22, 12, 6], [Tei - 45, Tci + 15, 3, 30], [Tei - 20, Tci + 35, 35, 3], [Tei - 60, Tci + 10, -5, 60], [Tei - 12, Tci + 45, 60, -5], [Tei - 25, Tci + 25, 20, -10]);
+  starts.push([Tei - 30, Tci + 22, 12, 6], [Tei - 45, Tci + 15, 3, 30], [Tei - 20, Tci + 35, 35, 3], [Tei - 60, Tci + 10, -5, 60], [Tei - 12, Tci + 45, 60, -5], [Tei - 25, Tci + 25, 20, -10], [Tei - 10, Math.max(Tci, Tei) + 15, 10, 10], [Tei - 30, Math.max(Tci, Tei) + 30, 30, 5]);
   let best = null;
   for (const s of starts) {
     const r = newton(ctx, s, bounds);
