@@ -138,6 +138,10 @@ canvas{width:100%;display:block;background:var(--panel2);border-radius:10px}
 svg text{font-family:var(--f-body)}
 .foot{color:var(--muted);font-size:12px;margin-top:16px;max-width:75ch}
 
+#tip{position:fixed;z-index:60;display:none;max-width:340px;background:#0b0f12;border:1px solid var(--accent);border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.4;color:var(--ink);box-shadow:0 8px 24px rgba(0,0,0,.5);pointer-events:none}
+#tip b{color:var(--accent);font-weight:600}
+.tile .k,.kv span,th,.changes li span,td[data-port],#tab-controls label{cursor:help}
+.kv span:hover,.tile .k:hover,th:hover,td[data-port]:hover,.changes li span:hover,#tab-controls label:hover{text-decoration:underline dotted;text-underline-offset:3px}
 </style>
 </head>
 <body>
@@ -189,6 +193,9 @@ svg text{font-family:var(--f-body)}
 </script>
 <script>
 /*ENGINE*/
+</script>
+<script>
+/*GLOSSARY*/
 </script>
 <script>
 (function(){
@@ -892,17 +899,17 @@ function syncControls(){
 function renderReadings(){
   const r = res, a = r.air, heat = cfg.mode === 'heat', on = S.comp;
   const short = PORTSHORT[heat ? 'heat' : 'cool'];
-  let h = '<h2>Refrigerant ports</h2><div class="tw"><table class="ports"><tr><th>Port</th><th>Pressure</th><th>°F</th><th>Sat °F</th><th>State</th><th>h</th></tr>';
+  let h = '<h2>Refrigerant ports</h2><div class="tw"><table class="ports"><tr><th>Port</th><th>Pressure</th><th>°F</th><th>Sat °F</th><th>State</th><th>Enthalpy, Btu/lb</th></tr>';
   for (const p of r.points) {
     const sat = p.phase === 'liq' ? p.tb : p.phase === 'vap' ? p.td : null;
     const pv = fmtPv(p.P);
-    h += `<tr title="${esc(p.name)}"><td><span class="dot">${p.i}</span>${esc(short[p.i-1])}</td><td class="n">${on ? pv[0] + '<small> ' + pv[1] + '</small>' : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? (p.td - p.tb < 0.6 ? f1(p.tb) : f0(p.tb)+'–'+f0(p.td)) : f1(sat)) : '—'}</td><td class="n">${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vap') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
+    h += `<tr><td data-port="${p.i}"><span class="dot">${p.i}</span>${esc(short[p.i-1])}</td><td class="n">${on ? pv[0] + '<small> ' + pv[1] + '</small>' : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? (p.td - p.tb < 0.6 ? f1(p.tb) : f0(p.tb)+'–'+f0(p.td)) : f1(sat)) : '—'}</td><td class="n">${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vap') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
   }
-  h += '</table></div>';
+  h += '</table></div><p class="hint">Enthalpy is the refrigerant\'s heat content per pound. The change between two ports × mass flow = heat moved: ports 6→7 is the evaporator, 9→1 the compressor, 2→3 the condenser (cooling). Hover any label for an explanation.</p>';
   const airRow = (lbl, A) => A.kind === 'air'
     ? `<tr><td>${lbl} in</td><td class="n">${f1(A.in.db)}</td><td class="n">${f1(A.in.wb)}</td><td class="n">${f0(A.in.rh)}%</td><td class="n">${f1(A.in.dp)}</td><td class="n">${f1(A.in.gr)}</td><td class="n">${A.in.h.toFixed(2)}</td></tr><tr><td>${lbl} out</td><td class="n">${on?f1(A.out.db):'—'}</td><td class="n">${on?f1(A.out.wb):'—'}</td><td class="n">${on?f0(A.out.rh)+'%':'—'}</td><td class="n">${on?f1(A.out.dp):'—'}</td><td class="n">${on?f1(A.out.gr):'—'}</td><td class="n">${on?A.out.h.toFixed(2):'—'}</td></tr>`
     : `<tr><td>${roleOf(lbl === 'Indoor' ? 'id' : 'od')} ${A.fluid.name.toLowerCase()} in / out</td><td class="n" colspan="6" style="text-align:left;white-space:normal">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
-  h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h, Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
+  h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>Enthalpy, Btu/lb dry air</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
   const Qref = heat ? a.Qc : a.Qe;
   const IA = a.indoor, st = heat ? r.ctx.cond.stream : r.ctx.evap.stream;
   const airQ = IA.kind === 'air' ? st.ma * Math.abs(IA.out.h - IA.in.h) : st.C * Math.abs(IA.tout - IA.tin);
@@ -1050,6 +1057,25 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
   if (b.dataset.tab === 'ph') drawPH();
 }));
 window.addEventListener('resize', () => drawPH());
+
+/* ---------- hover explanations ---------- */
+const tipEl = document.createElement('div'); tipEl.id = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl);
+const TIPSEL = '.tile .k, .kv span, th, .changes li span, #tab-controls label, .mini span, td[data-port], #schem .tp, #schem .comp';
+function tipText(el){
+  if (el.matches('td[data-port], #schem .tp')) { const i = +(el.dataset.port || el.dataset.tp); const pt = res && res.points[i-1]; return `<b>${i} · ${esc(pt ? pt.name : '')}</b><br>${esc(PORT_TIPS[cfg.mode === 'heat' ? 'heat' : 'cool'][i-1])}`; }
+  if (el.matches('#schem .comp')) return esc(PART_TIPS[el.dataset.part] || '');
+  const t = tipFor(el.textContent); return t ? `<b>${esc(el.textContent.trim())}</b><br>${esc(t)}` : null;
+}
+document.addEventListener('mouseover', ev => {
+  const el = ev.target.closest(TIPSEL); if (!el) { tipEl.style.display = 'none'; return; }
+  const t = tipText(el); if (!t) { tipEl.style.display = 'none'; return; }
+  tipEl.innerHTML = t; tipEl.style.display = 'block';
+  const r = el.getBoundingClientRect(), tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+  let left = Math.min(window.innerWidth - tw - 8, Math.max(8, r.left));
+  let top = r.bottom + 6; if (top + th > window.innerHeight - 8) top = r.top - th - 6;
+  tipEl.style.left = left + 'px'; tipEl.style.top = top + 'px';
+});
+document.addEventListener('scroll', () => tipEl.style.display = 'none', true);
 
 /* ---------- boot ---------- */
 if (!cfg.matched) rematch(); else if (!cfg.sw) cfg.sw = E.defaultSwitches(F());

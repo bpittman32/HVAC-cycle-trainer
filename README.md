@@ -28,6 +28,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 | `src/engine.js` | Cycle model: properties, coils, compressor, metering, charge inventory, solver |
 | `src/app.html` | Interface template |
 | `src/props.json` | Refrigerant property tables |
+| `src/glossary.js` | Hover explanations for every reading and setting |
 | `tools/props.py` | Regenerates `props.json` (Peng-Robinson EOS fitted to PT charts; needs numpy + scipy) |
 | `tools/build.py` | Inlines engine and tables into `index.html` |
 
