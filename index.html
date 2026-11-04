@@ -148,7 +148,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.1.0</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.1.1</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -176,7 +176,7 @@ svg text{font-family:var(--f-body)}
   </div>
   <div class="pane on" id="tab-controls"></div>
   <div class="pane" id="tab-readings"></div>
-  <div class="pane" id="tab-ph"><canvas id="ph" height="360"></canvas><p class="hint">Log pressure vs enthalpy. Dome from the selected refrigerant's property tables; the cycle is drawn from the current operating point. Numbers match the ports on the schematic.</p></div>
+  <div class="pane" id="tab-ph"><canvas id="ph" height="400"></canvas><p class="hint">Log pressure vs enthalpy. Dome from the selected refrigerant's property tables; the cycle is drawn from the current operating point. Numbers match the ports on the schematic.</p></div>
   <div class="pane" id="tab-elec"></div>
   <div class="pane" id="tab-log"></div>
 </div>
@@ -1436,34 +1436,63 @@ function renderLog(){ const el = $('tab-log'); if (!el) return; el.innerHTML = '
 
 function drawPH(){
   const cv = $('ph'); if (!cv.offsetParent) return;
-  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = 360;
-  cv.width = W * dpr; cv.height = H * dpr; const x = cv.getContext('2d'); x.scale(dpr, dpr);
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = 400;
+  cv.style.height = H + 'px'; cv.width = W * dpr; cv.height = H * dpr;
+  const x = cv.getContext('2d'); x.scale(dpr, dpr);
   const F_ = F(), css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
-  const L = 46, R = 12, T = 14, B = 34;
-  const Pmin = Math.max(F_.Pmin, 15), Pmax = F_.Pmax;
-  const hmin = F_.hLiqT(-40) - 5, hmax = F_.vap(Math.min(Pmax*0.9, 400), 120).h;
+  const L = 62, R = 18, T = 40, B = 46;
+  const Pmin = Math.max(F_.Pmin, 15), Ptop = F_.Pmax * 1.3;
+  const hmin = F_.hLiqT(-40) - 5, hmax = F_.vap(Math.min(F_.Pmax * 0.9, 400), 120).h;
   const X = h => L + (h - hmin) / (hmax - hmin) * (W - L - R);
-  const Y = P => T + (1 - (Math.log(P) - Math.log(Pmin)) / (Math.log(Pmax) - Math.log(Pmin))) * (H - T - B);
-  x.font = '11px IBM Plex Mono, monospace'; x.fillStyle = col('--muted'); x.strokeStyle = col('--line'); x.lineWidth = 1;
-  [25,50,100,200,300,400,600].forEach(pg => { const P = pg + PATM; if (P < Pmin || P > Pmax) return; const y = Y(P); x.beginPath(); x.moveTo(L, y); x.lineTo(W - R, y); x.stroke(); x.fillText(pg, 4, y + 4); });
-  for (let h = Math.ceil(hmin/20)*20; h < hmax; h += 20) { const xx = X(h); x.beginPath(); x.moveTo(xx, T); x.lineTo(xx, H - B); x.stroke(); x.fillText(h, xx - 8, H - B + 14); }
-  x.fillText('psig', 4, T + 2); x.fillText('enthalpy, Btu/lb', W - 130, H - 6);
-  // dome
+  const Y = P => T + (1 - (Math.log(P) - Math.log(Pmin)) / (Math.log(Ptop) - Math.log(Pmin))) * (H - T - B);
+  // title row
+  x.fillStyle = col('--ink'); x.font = '600 13px Barlow, sans-serif'; x.textBaseline = 'middle';
+  x.fillText(`${cfg.refrigerant} pressure–enthalpy`, L, 16);
+  if (S.comp) { x.fillStyle = col('--muted'); x.font = '12px Barlow, sans-serif'; const t = `refrigeration effect ${(res.hEo - res.hEi).toFixed(1)} Btu/lb · compression ${(res.hDis - res.hEo).toFixed(1)} Btu/lb`; x.fillText(t, W - R - x.measureText(t).width, 16); }
+  // grid + ticks
+  x.font = '11px IBM Plex Mono, monospace'; x.strokeStyle = col('--line'); x.lineWidth = 1; x.fillStyle = col('--muted');
+  x.textAlign = 'right'; x.textBaseline = 'middle';
+  [0,25,50,100,200,300,400,600,800].forEach(pg => { const P = pg + PATM; if (P < Pmin || P > Ptop) return; const y = Y(P); x.beginPath(); x.moveTo(L, y); x.lineTo(W - R, y); x.stroke(); x.fillText(pg, L - 8, y); });
+  x.textAlign = 'center'; x.textBaseline = 'top';
+  for (let h = Math.ceil(hmin/20)*20; h <= hmax; h += 20) { const xx = X(h); x.beginPath(); x.moveTo(xx, T); x.lineTo(xx, H - B); x.stroke(); x.fillText(h, xx, H - B + 6); }
+  // axis titles
+  x.font = '12px Barlow, sans-serif'; x.fillText('Enthalpy, Btu/lb', L + (W - L - R) / 2, H - 18);
+  x.save(); x.translate(14, T + (H - T - B) / 2); x.rotate(-Math.PI / 2); x.textBaseline = 'middle'; x.fillText('Pressure, psig (log scale)', 0, 0); x.restore();
+  // plot area clip
+  x.save(); x.beginPath(); x.rect(L, T, W - L - R, H - T - B); x.clip();
+  // dome (to the top of the property table)
   x.lineWidth = 2; x.strokeStyle = col('--muted'); x.beginPath();
-  const N = 60; const pts = [];
-  for (let i = 0; i <= N; i++) { const P = Pmin * Math.pow(Pmax / Pmin, i / N); pts.push(P); }
+  const N = 70, pts = []; for (let i = 0; i <= N; i++) pts.push(Pmin * Math.pow(F_.Pmax / Pmin, i / N));
   pts.forEach((P,i) => { const xx = X(F_.hBub(P)), y = Y(P); i ? x.lineTo(xx, y) : x.moveTo(xx, y); });
-  for (let i = pts.length - 1; i >= 0; i--) { const P = pts[i]; x.lineTo(X(F_.hDew(P)), Y(P)); }
+  const Ptb = pts[pts.length-1], hc = 0.5 * (F_.hBub(Ptb) + F_.hDew(Ptb));
+  x.quadraticCurveTo(X(hc), Y(F_.Pc * 1.08), X(F_.hDew(Ptb)), Y(Ptb));   // close through the critical point
+  for (let i = pts.length - 1; i >= 0; i--) x.lineTo(X(F_.hDew(pts[i])), Y(pts[i]));
   x.stroke();
-  if (!S.comp) { x.fillStyle = col('--muted'); x.font = '13px Barlow, sans-serif'; x.fillText('Compressor off — no cycle to draw.', L + 20, T + 30); return; }
-  // cycle path in flow order
+  x.fillStyle = col('--muted'); x.font = '11px Barlow, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'bottom';
+  const mid = Math.sqrt(Pmin * F_.Pmax) * 0.6; x.fillText('liquid', X(F_.hBub(mid)) - 26, Y(mid)); x.fillText('mixture', (X(F_.hBub(mid)) + X(F_.hDew(mid))) / 2, Y(mid)); x.fillText('vapor', X(F_.hDew(mid)) + 28, Y(mid));
+  x.restore();
+  if (!S.comp) { x.fillStyle = col('--muted'); x.font = '13px Barlow, sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText('Compressor off — no cycle to draw.', L + 16, T + 20); return; }
+  // cycle
   const p = res.points, heat = cfg.mode === 'heat';
   const order = heat ? [9,1,8,7,6,5,4,3,2,9] : [9,1,2,3,4,5,6,7,8,9];
   x.lineWidth = 2.5; x.strokeStyle = col('--accent'); x.beginPath();
   order.forEach((n,i) => { const q = p[n-1], xx = X(q.h), y = Y(q.P); i ? x.lineTo(xx, y) : x.moveTo(xx, y); }); x.stroke();
-  order.slice(0,-1).forEach(n => { const q = p[n-1], xx = X(q.h), y = Y(q.P); x.fillStyle = col('--bg'); x.beginPath(); x.arc(xx, y, 7, 0, 7); x.fill(); x.strokeStyle = col('--accent'); x.lineWidth = 1.5; x.stroke(); x.fillStyle = col('--accent'); x.font = '600 9px IBM Plex Mono, monospace'; x.fillText(n, xx - 3, y + 3); });
-  x.fillStyle = col('--ink'); x.font = '12px Barlow, sans-serif';
-  x.fillText(`${cfg.refrigerant} · refrigeration effect ${(res.hEo - res.hEi).toFixed(1)} Btu/lb · compression ${(res.hDis - res.hEo).toFixed(1)} Btu/lb`, L + 6, T + 12);
+  // cluster ports that land within 14 px of each other, one marker per cluster
+  const cl = [];
+  for (const n of order.slice(0, -1)) { const q = p[n-1], xx = X(q.h), y = Y(q.P); const c = cl.find(c => Math.hypot(c.x - xx, c.y - y) < 14); if (c) c.n.push(n); else cl.push({x: xx, y, n: [n]}); }
+  const cx0 = (L + W - R) / 2, cy0 = (T + H - B) / 2;
+  x.font = '600 11px IBM Plex Mono, monospace'; x.textBaseline = 'middle'; x.textAlign = 'center';
+  for (const c of cl) {
+    c.n.sort((a,b) => a - b);
+    const lbl = c.n.length > 2 && c.n.every((v,i) => !i || v === c.n[i-1] + 1) ? `${c.n[0]}–${c.n[c.n.length-1]}` : c.n.join(',');
+    x.fillStyle = col('--accent'); x.beginPath(); x.arc(c.x, c.y, 4, 0, 7); x.fill();
+    // label pill pushed outward from the cycle's centre
+    const dx = c.x - cx0, dy = c.y - cy0, d = Math.hypot(dx, dy) || 1;
+    const w = x.measureText(lbl).width + 12, lx = c.x + dx / d * 20, ly = c.y + dy / d * 16;
+    x.fillStyle = col('--bg'); x.strokeStyle = col('--accent'); x.lineWidth = 1.2;
+    x.beginPath(); if (x.roundRect) x.roundRect(lx - w/2, ly - 9, w, 18, 9); else x.rect(lx - w/2, ly - 9, w, 18); x.fill(); x.stroke();
+    x.fillStyle = col('--accent'); x.fillText(lbl, lx, ly + 0.5);
+  }
 }
 
 /* ---------- change pipeline ---------- */
@@ -1514,7 +1543,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.1.0 started at steady state.');
+logEvent('Simulator v1.1.1 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
