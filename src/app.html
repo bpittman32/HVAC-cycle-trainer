@@ -602,7 +602,7 @@ function renderProbe(){
     h = `<h3><span class="dot">${p.i}</span>${esc(p.name)}</h3>` + kv([
       ['Pressure', fmtP(P)], ['Temperature', f1(T) + '°F'],
       ['Dew sat. temp', f1(F_.tDew(P)) + '°F'], ['Bubble sat. temp', f1(F_.tBub(P)) + '°F'],
-      on && ['Condition', stateDesc(p)], on && ['Enthalpy', p.h.toFixed(1) + ' Btu/lb'],
+      on && ['Condition', stateDesc(p)], on && ['Refrigerant enthalpy', p.h.toFixed(1) + ' Btu/lb'],
     ]) + (on ? '' : '<p class="hint">Compressor off — pressures are equalizing.</p>');
   } else {
     const id = selected.id, a = r.air;
@@ -626,6 +626,7 @@ function renderProbe(){
       ]);
     } else if (id === 'odcoil' || id === 'idcoil') {
       const isId = id === 'idcoil', role = (isId === heat) ? 'cond' : 'evap', A = isId ? a.indoor : a.outdoor, f = r.f;
+      const stm = role === 'cond' ? r.ctx.cond.stream : r.ctx.evap.stream, rh = role === 'cond' ? [r.hDis, r.hCo] : [r.hEi, r.hEo];
       const zonesTxt = role === 'cond' ? `desuperheat ${(f.f1*100).toFixed(0)}% · condensing ${(f.f2*100).toFixed(0)}% · subcooling ${(f.f3*100).toFixed(0)}%` : `boiling ${(f.ftp*100).toFixed(0)}% · superheating ${(f.fsh*100).toFixed(0)}%`;
       h = `<h3>${isId ? 'Indoor' : 'Outdoor'} coil — ${role === 'cond' ? 'condenser' : 'evaporator'}</h3>` + kv([
         ['Heat moved', on ? f1((role === 'cond' ? a.Qc : a.Qe)/1000) + ' kBtu/h' : '—'],
@@ -633,11 +634,19 @@ function renderProbe(){
         A.kind === 'air' ? ['Air in (db/wb)', `${f1(A.in.db)} / ${f1(A.in.wb)}°F`] : ['Water in', f1(A.tin) + '°F'],
         A.kind === 'air' ? ['Air out (db/wb)', on ? `${f1(A.out.db)} / ${f1(A.out.wb)}°F` : '—'] : ['Water out', on ? f1(A.tout) + '°F' : '—'],
         A.kind === 'air' && ['Air ΔT', on ? f1(Math.abs(A.in.db - A.out.db)) + '°F' : '—'],
+        A.kind === 'air' && ['Air enthalpy in', A.in.h.toFixed(2) + ' Btu/lb'],
+        A.kind === 'air' && ['Air enthalpy out', on ? A.out.h.toFixed(2) + ' Btu/lb' : '—'],
+        A.kind === 'air' && ['Air Δh', on ? Math.abs(A.out.h - A.in.h).toFixed(2) + ' Btu/lb' : '—'],
+        A.kind === 'air' && ['Air mass flow', f0(stm.ma) + ' lb/h'],
+        ['Refrigerant h in', on ? rh[0].toFixed(1) + ' Btu/lb' : '—'],
+        ['Refrigerant h out', on ? rh[1].toFixed(1) + ' Btu/lb' : '—'],
+        ['Refrigerant Δh', on ? Math.abs(rh[0] - rh[1]).toFixed(1) + ' Btu/lb' : '—'],
+        ['Refrigerant flow', on ? f0(r.m) + ' lb/h' : '—'],
         role === 'evap' && A.kind === 'air' && ['Coil surface', r.wetCoil ? 'wet' : 'dry'],
         role === 'evap' && A.kind === 'air' && ['Moisture removed', on ? f1(Math.max(0,(A.in.W - A.out.W))*7000) + ' gr/lb' : '—'],
         ['Refrigerant ΔP', on ? f1(role === 'cond' ? r.PcIn - r.Pco : r.PeIn - r.PeOut) + ' psi' : '—'],
         ['Charge held', on ? (role === 'cond' ? r.mParts.cond : r.mParts.evap).toFixed(2) + ' lb' : '—'],
-      ]) + (on ? `<p class="hint">Coil length used for ${zonesTxt}.</p>` : '');
+      ]) + (on ? `<p class="hint">Coil length used for ${zonesTxt}.</p><p class="hint">Heat moved = ${A.kind === 'air' ? 'air flow × air Δh' : 'water flow × water ΔT'} = refrigerant flow × refrigerant Δh. Air enthalpy is per lb of dry air.</p>` : '');
     } else if (id === 'idmeter' || id === 'odmeter') {
       const isId = id === 'idmeter', M = isId ? cfg.indoor : cfg.outdoor, active = isId !== heat;
       const K = isId ? cfg.matched.in : cfg.matched.out;
@@ -837,7 +846,7 @@ function syncControls(){
 /* ---------- readings & electrical & P-h ---------- */
 function renderReadings(){
   const r = res, a = r.air, heat = cfg.mode === 'heat', on = S.comp;
-  let h = '<h2>Refrigerant ports</h2><div class="tw"><table><tr><th>Port</th><th>Pressure</th><th>Temp</th><th>Sat °F</th><th>Condition</th><th>h</th></tr>';
+  let h = '<h2>Refrigerant ports</h2><div class="tw"><table><tr><th>Port</th><th>Pressure</th><th>Temp</th><th>Sat °F</th><th>Condition</th><th>h, Btu/lb</th></tr>';
   for (const p of r.points) {
     const sat = p.phase === 'liq' ? p.tb : p.phase === 'vap' ? p.td : null;
     h += `<tr><td><span class="dot">${p.i}</span>${esc(p.name)}</td><td class="n">${on ? fmtP(p.P) : '—'}</td><td class="n">${on ? f1(p.T) : '—'}</td><td class="n">${on ? (sat == null ? f1(p.tb)+'–'+f1(p.td) : f1(sat)) : '—'}</td><td>${on ? (p.phase === 'vap' ? 'SH ' + p.sh.toFixed(1) : p.phase === 'liq' ? 'SC ' + p.sc.toFixed(1) : (p.x*100).toFixed(0) + '% vapor') : '—'}</td><td class="n">${on ? p.h.toFixed(1) : '—'}</td></tr>`;
@@ -846,20 +855,29 @@ function renderReadings(){
   const airRow = (lbl, A) => A.kind === 'air'
     ? `<tr><td>${lbl} in</td><td class="n">${f1(A.in.db)}</td><td class="n">${f1(A.in.wb)}</td><td class="n">${f0(A.in.rh)}%</td><td class="n">${f1(A.in.dp)}</td><td class="n">${f1(A.in.gr)}</td><td class="n">${A.in.h.toFixed(2)}</td></tr><tr><td>${lbl} out</td><td class="n">${on?f1(A.out.db):'—'}</td><td class="n">${on?f1(A.out.wb):'—'}</td><td class="n">${on?f0(A.out.rh)+'%':'—'}</td><td class="n">${on?f1(A.out.dp):'—'}</td><td class="n">${on?f1(A.out.gr):'—'}</td><td class="n">${on?A.out.h.toFixed(2):'—'}</td></tr>`
     : `<tr><td>${lbl} water in / out</td><td class="n" colspan="6">${f1(A.tin)}°F → ${on ? f1(A.tout) : '—'}°F at ${A.gpm} gpm</td></tr>`;
-  h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
+  h += '<h2 style="margin-top:14px">Air & water side</h2><div class="tw"><table><tr><th></th><th>DB °F</th><th>WB °F</th><th>RH</th><th>DP °F</th><th>gr/lb</th><th>h, Btu/lb</th></tr>' + airRow('Indoor', a.indoor) + airRow('Outdoor', a.outdoor) + '</table></div>';
   const Qref = heat ? a.Qc : a.Qe;
   const IA = a.indoor, st = heat ? r.ctx.cond.stream : r.ctx.evap.stream;
-  const airQ = IA.kind === 'air' ? (heat ? st.C * (IA.out.db - IA.in.db) : st.ma * (IA.in.h - IA.out.h)) : Qref;
+  const airQ = IA.kind === 'air' ? st.ma * Math.abs(IA.out.h - IA.in.h) : Qref;
+  const rh = heat ? [r.hDis, r.hCo] : [r.hEi, r.hEo];
   const ev = a.evap;
-  h += '<h2 style="margin-top:14px">Capacity & heat balance</h2>' + kv([
-    ['Refrigerant-side', on ? f0(Qref) + ' Btu/h' : '—'],
-    ['Air/water-side', on ? f0(airQ) + ' Btu/h' : '—'],
-    ['Heat balance', on ? ((airQ - Qref) / Qref * 100).toFixed(1) + '% (ASHRAE 37 limit ±6%)' : '—'],
+  h += '<h2 style="margin-top:14px">Indoor air-enthalpy method</h2>' + (IA.kind === 'air' ? kv([
+    ['Air mass flow', f0(st.ma) + ' lb/h'],
+    ['Enthalpy in', IA.in.h.toFixed(2) + ' Btu/lb'], ['Enthalpy out', on ? IA.out.h.toFixed(2) + ' Btu/lb' : '—'],
+    ['Δh', on ? Math.abs(IA.out.h - IA.in.h).toFixed(2) + ' Btu/lb' : '—'],
+    ['Capacity', on ? f0(airQ) + ' Btu/h' : '—'],
+  ]) : '') + '<h2 style="margin-top:14px">Refrigerant-enthalpy method (indoor coil)</h2>' + kv([
+    ['Refrigerant flow', on ? f0(r.m) + ' lb/h' : '—'],
+    ['Enthalpy in', on ? rh[0].toFixed(1) + ' Btu/lb' : '—'], ['Enthalpy out', on ? rh[1].toFixed(1) + ' Btu/lb' : '—'],
+    ['Δh', on ? Math.abs(rh[0] - rh[1]).toFixed(1) + ' Btu/lb' : '—'],
+    ['Capacity', on ? f0(Qref) + ' Btu/h' : '—'],
+  ]) + '<p class="hint">Capacity = mass flow × Δh on each side. Air enthalpy is per lb of dry air.</p><h2 style="margin-top:14px">Heat balance & split</h2>' + kv([
+    ['Heat balance', on ? (Math.abs(airQ - Qref) / Qref * 100 < 0.05 ? '0.0' : ((airQ - Qref) / Qref * 100).toFixed(1)) + '% (ASHRAE 37 limit ±6%)' : '—'],
     !heat && ev.kind === 'air' && ['Sensible', on ? f0(ev.sens) + ' Btu/h' : '—'],
     !heat && ev.kind === 'air' && ['Latent', on ? f0(ev.lat) + ' Btu/h' : '—'],
     !heat && ev.kind === 'air' && ['SHR', on ? (ev.sens / a.Qe).toFixed(2) : '—'],
-    ['Heat rejected/absorbed', on ? f0(heat ? a.Qe : a.Qc) + ' Btu/h' : '—'],
-    ['Mass flow', on ? f0(r.m) + ' lb/h' : '—'], ['Compression ratio', on ? r.PR.toFixed(2) : '—'],
+    [heat ? 'Heat absorbed outdoors' : 'Heat rejected outdoors', on ? f0(heat ? a.Qe : a.Qc) + ' Btu/h' : '—'],
+    ['Compression ratio', on ? r.PR.toFixed(2) : '—'],
   ]);
   const mp = r.mParts, tot = Object.values(mp).reduce((x,y) => x+y, 0);
   const cols = {cond:'var(--cond)', evap:'var(--mix)', liquidLine:'var(--liq)', vaporLine:'var(--suct)', compressorAcc:'var(--muted)'};
