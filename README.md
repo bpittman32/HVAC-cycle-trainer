@@ -15,7 +15,7 @@ Open `index.html` in any browser. It is one self-contained file with no install 
 - TXV, piston or EEV on each coil; single-speed, two-stage or inverter compressor
 - Tube-and-fin, microchannel or coaxial water coils; ECM or PSC blower with duct static
 - High/low pressure switches with trips, anti-short-cycle and lockout
-- Compressor C/R/S amps, fan and blower amps, live run-capacitor check
+- Compressor C/R/S amps, fan and blower amps
 - Pressures (psig / inHg) and temperatures at nine ports, air-side psychrometrics, P-h chart
 
 ## Project layout

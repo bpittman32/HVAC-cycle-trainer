@@ -1078,14 +1078,14 @@ function renderProbe(){
         ['Suction', fmtP(disp.Ps)], ['Discharge', fmtP(disp.Pd)], ['Compression ratio', on ? (r.PR).toFixed(2) : '—'],
         ['Discharge temp', f0(disp.Tdis) + '°F'], ['Mass flow', on ? f0(r.m) + ' lb/h' : '0'], ['Volumetric eff.', on ? (r.etaV*100).toFixed(0)+'%' : '—'],
         ['Isentropic eff.', on ? (r.etaIs*100).toFixed(0)+'%' : '—'], ['Suction gas', on ? (r.wet ? 'LIQUID FLOODBACK' : r.shSuc.toFixed(1)+'°F SH') : '—'],
-      ]) + (c.type !== 'inv' ? `<p class="hint">Run capacitor ${c.capRated} µF rated · measured ${on ? f1(c.capMeas) : '—'} µF (start-winding amps × 2652 ÷ ${f0(c.capV)} V across the cap)</p>` : '');
+      ]);
     } else if (id === 'odfan' || id === 'blower') {
       const isB = id === 'blower', m = isB ? e.blower : e.odFan;
       if (!isB && cfg.outdoor.type === 'water') h = `<h3>Water loop</h3>` + kv([['Flow', cfg.water.gpm + ' gpm'], ['Entering water', f1(cfg.water.ewt)+'°F'], ['Leaving water', on ? f1(a.outdoor.tout)+'°F' : '—'], ['Water ΔT', on ? f1(Math.abs(a.outdoor.tout - a.outdoor.tin))+'°F' : '—']]);
       else h = `<h3>${isB ? cfg.blower.type.toUpperCase() + ' indoor blower' : 'Outdoor fan motor (PSC)'}</h3>` + kv([
         ['Amps', ((isB ? S.call && cfg.blowerOn : on) ? f1(m.A) : '0.0') + ' A'], ['Power', ((isB ? S.call : on) ? f0(m.W) : 0) + ' W'],
         ['Airflow', f0(isB ? r.ctx.idCfm : r.ctx.odCfm) + ' cfm'], isB && ['External static', cfg.blower.esp.toFixed(2) + ' in. w.c.'],
-        isB && ['CFM per ton', f0(r.ctx.idCfm / cfg.tons)], m.capRated && ['Cap rated', m.capRated + ' µF'], m.capRated && ['Cap measured', ((isB ? S.call : on) ? f1(m.capMeas) : '—') + ' µF'],
+        isB && ['CFM per ton', f0(r.ctx.idCfm / cfg.tons)],
       ]);
     } else if (id === 'odcoil' || id === 'idcoil') {
       const isId = id === 'idcoil', role = (isId === heat) ? 'cond' : 'evap', A = isId ? a.indoor : a.outdoor, f = r.f;
@@ -1235,11 +1235,8 @@ function buildControls(){
     num('asc','Anti-short-cycle delay','s',0,600,15, () => cfg.sw.asc, v => cfg.sw.asc = v) +
     num('maxT','Trips before lockout','',1,6,1, () => cfg.sw.maxTrips, v => cfg.sw.maxTrips = v) +
     `<button class="btn" id="swDefault">Restore default switch settings</button>`);
-  h += grp('Electrical supply & capacitors',
-    num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v) +
-    num('compCap','Compressor run cap (rated)','µF',10,120,0.5, () => cfg.elec.compCap, v => cfg.elec.compCap = v) +
-    num('fanCap','Outdoor fan cap (rated)','µF',2,15,0.5, () => cfg.elec.fanCap, v => cfg.elec.fanCap = v) +
-    num('blowerCap','Blower cap (PSC only)','µF',3,20,0.5, () => cfg.elec.blowerCap, v => cfg.elec.blowerCap = v));
+  h += grp('Electrical supply',
+    num('volts','Line voltage','V',180,260,1, () => cfg.elec.volts, v => cfg.elec.volts = v));
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn danger" id="resetAll">Start over (factory defaults)</button></div>`;
   $('tab-controls').innerHTML = h;
   // presets
@@ -1342,14 +1339,8 @@ function renderElec(){
     ['Compressor watts', on ? f0(c.W) : '0'], ['RLA / LRA', `${c.RLA} / ${c.LRA} A`], c.type === 'inv' && ['Inverter output', on ? c.hz + ' Hz' : '0 Hz'],
     cfg.outdoor.type !== 'water' && ['OD fan', on ? f1(e.odFan.A) + ' A · ' + f0(e.odFan.W) + ' W' : '0.0 A'],
   ]);
-  if (c.type !== 'inv') h += `<h2 style="margin-top:12px">Capacitor check (run cap, live)</h2>` + kv([
-    ['Herm terminal (C)', `${cfg.elec.compCap} µF rated`], ['Voltage across cap', on ? f0(c.capV) + ' V' : '—'], ['Start winding amps', on ? f1(c.S) + ' A' : '—'],
-    ['Calculated µF', on ? f1(c.capMeas) : '—'], ['Within ±6%?', on ? (Math.abs(c.capMeas / cfg.elec.compCap - 1) <= 0.06 ? 'yes' : 'NO') : '—'],
-    cfg.outdoor.type !== 'water' && ['Fan cap', on ? `${f1(e.odFan.capMeas)} µF of ${cfg.elec.fanCap}` : '—'],
-  ]) + `<p class="hint">µF = start-winding amps × 2652 ÷ volts across the capacitor.</p>`;
   h += `<h2 style="margin-top:12px">Indoor unit</h2>` + kv([
     ['Blower', bOn ? f1(e.blower.A) + ' A · ' + f0(e.blower.W) + ' W' : '0.0 A'], ['Airflow', f0(res.ctx.idCfm) + ' cfm'], ['External static', cfg.blower.esp.toFixed(2) + ' in.'],
-    e.blower.capRated && ['Blower cap', bOn ? `${f1(e.blower.capMeas)} µF of ${e.blower.capRated}` : '—'],
   ]);
   h += `<h2 style="margin-top:12px">System</h2>` + kv([['Total power', on ? f0(e.totalW) + ' W' : f0(bOn ? e.blower.W : 0) + ' W'], ['COP', on ? (disp.COP).toFixed(2) : '—'], ['EER (Btu/Wh)', on ? (disp.COP * 3.412).toFixed(1) : '—']]);
   $('tab-elec').innerHTML = h;
