@@ -372,7 +372,7 @@ function offVM(){
 }
 
 /* ---------- transient controller ---------- */
-const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, tRun: 999, t: 0, speed: 1 };
+const S = { call: true, comp: true, trip: null, lock: false, asc: 0, trips: 0, tRun: 999, t: 0, speed: 1, accM: 0, accIn: 0, accBleed: 0, accOver: 0, accState: 'dry' };
 let disp = null, logRows = [];
 function logEvent(msg, kind){ const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60); logRows.unshift({t: `${m}:${String(s).padStart(2,'0')}`, msg, kind}); if (logRows.length > 60) logRows.pop(); renderLog(); }
 function tau(k){ if (k === 'amps' || k === 'kw' || k === 'm') return 3; if (k === 'Tdis') return 120; if (k[0] === 'P' || k === 'lowP' || k === 'highP' || k === 'Pd' || k === 'Ps') return 16; return 32; }
@@ -382,6 +382,23 @@ function tick(dtReal){        // physics in sub-steps of at most 0.5 s so fast-f
   const tot = dtReal * S.speed, n = Math.max(1, Math.ceil(tot / 0.5));
   for (let i = 0; i < n; i++) step(tot / n);
   renderTiles(); renderStatus(); updateSchemLive();
+}
+/* Suction accumulator: liquid from a flooded evaporator collects in the shell. It leaves through the oil-return
+   (bleed) hole at the bottom of the J-tube, faster as the level rises, and a little boils off from shell heat.
+   Once the shell is full, the rest spills over the top of the J-tube into the compressor. */
+function accCap(){ return Math.max(0.2, res.ctx.Vacc * F().rhoBub(Math.max(res.Ps, F().Pmin)) * 0.92); }
+function accStep(dt){
+  const r = res, cap = accCap(), flowing = S.comp && !r.ctx.compRev && !r.starved;
+  const inflow = flowing && r.ze < 0 && isFinite(r.xEo) ? r.mr * Math.max(0, 1 - r.xEo) : 0;   // lb/h of liquid arriving
+  const L = S.accM / cap;
+  const bleed = flowing ? 0.06 * r.ctx.mNom * Math.sqrt(Math.max(0, L)) : 0;                   // through the oil-return hole
+  const boil = S.accM > 0 ? (flowing ? 2 : 1) : 0;                                               // shell heat boils some off
+  let M = S.accM + (inflow - bleed - boil) * dt / 3600;
+  S.accOver = 0;
+  if (M >= cap) { S.accOver = Math.max(0, inflow - bleed - boil); M = cap; }
+  S.accM = Math.max(0, M); S.accIn = inflow; S.accBleed = Math.min(bleed, S.accM > 0 || inflow > 0 ? bleed : 0);
+  const Ln = S.accM / cap;
+  S.accState = !flowing ? (Ln > 0.02 ? 'off' : 'dry') : S.accOver > 0.5 ? 'over' : inflow > bleed + boil + 0.2 ? 'fill' : Ln > 0.02 && inflow < bleed + boil - 0.2 ? 'drain' : Ln > 0.02 ? 'hold' : 'dry';
 }
 function step(dt){
   S.t += dt;
@@ -403,7 +420,15 @@ function step(dt){
     else if (sw.fzOn !== false && idW() && disp.lwtId <= sw.fzId) { S.tripSide = 'id'; trip('FRZ', `${roleOf('id').toLowerCase()} leaving ${E.WFLUID[cfg.idWater.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtId)}°F (cut-out ${sw.fzId}°F)`); }
     else if (sw.fzOn !== false && odW() && disp.lwtOd <= sw.fzOd) { S.tripSide = 'od'; trip('FRZ', `${roleOf('od').toLowerCase()} leaving ${E.WFLUID[cfg.water.fluid||'water'].name.toLowerCase()} ${f1(disp.lwtOd)}°F (cut-out ${sw.fzOd}°F)`); }
   }
+  accStep(dt);
   let tgt = S.comp ? Object.assign({}, VM) : offVM();
+  if (S.comp && S.accIn > 0 && S.accState !== 'over') {   // while the accumulator is soaking up liquid, the compressor sees less of it
+    const ratio = Math.min(1, (S.accBleed + S.accOver) / S.accIn), dry = Math.max(tgt.Tdis, F().tDew(tgt.Pd) + 45);
+    tgt.Tdis += (dry - tgt.Tdis) * (1 - ratio); tgt.T1 = tgt.Tdis;
+  } else if (S.comp && S.accIn === 0 && S.accBleed > 0 && res.mr > 0) {   // draining: the bleed hole feeds liquid to an otherwise dry compressor
+    const floor = F().tDew(tgt.Pd) + 5;
+    tgt.Tdis = Math.max(Math.min(tgt.Tdis, floor), tgt.Tdis - 300 * S.accBleed / res.mr); tgt.T1 = tgt.Tdis;
+  }
   if (S.comp && res.ctx.compRev) {        // scroll or screw turning backward: no pumping, low amps, hot shell
     const o = offVM(); o.amps = elecRes.comp.A; o.kw = elecRes.totalW / 1000; o.Tdis = (odW() ? cfg.water.ewt : cfg.cond.odDB) + 230; o.COP = 0; tgt = o;
   }
@@ -557,7 +582,11 @@ function buildSchem(){
   // RV
   s += `<g class="comp" data-part="rv"><rect x="60" y="168" width="60" height="16" rx="4" fill="#1d2731" stroke="var(--line)"/><text x="90" y="179.5" text-anchor="middle" fill="var(--ink)" font-size="8" font-weight="600" id="rvLbl">RV</text></g>`;
   // accumulator
-  s += `<g class="comp" data-part="acc"><rect x="82" y="202" width="16" height="40" rx="8" fill="#1d2731" stroke="var(--line)"/><text x="78" y="226" text-anchor="end" fill="var(--muted)" font-size="7.5">accum.</text></g>`;
+  s += `<g class="comp" data-part="acc"><clipPath id="accClip"><rect x="81" y="203" width="18" height="38" rx="8"/></clipPath>`
+     + `<rect x="80" y="202" width="20" height="40" rx="9" fill="#1d2731" stroke="var(--line)" id="accShell"/>`
+     + `<g clip-path="url(#accClip)"><rect id="accLiq" x="80" y="242" width="20" height="0" fill="var(--mix)" opacity=".85"/><rect id="accSurf" x="80" y="242" width="20" height="1.2" fill="#d9ccff" opacity="0"/></g>`
+     + `<path d="M86 203 V235 Q86 239 90 239 Q94 239 94 235 V203" fill="none" stroke="var(--muted)" stroke-width="1" opacity=".55"/>`
+     + `<text x="76" y="226" text-anchor="end" fill="var(--muted)" font-size="7.5">accum.</text><text id="accPct" x="76" y="236" text-anchor="end" fill="var(--mix)" font-size="7"></text></g>`;
   // compressor
   s += `<g class="comp" data-part="comp"><circle cx="160" cy="236" r="20" fill="#1d2731" stroke="var(--line)" stroke-width="1.5"/><text x="160" y="233" text-anchor="middle" fill="var(--ink)" font-size="8.5" font-weight="600">COMP</text><text x="160" y="245" text-anchor="middle" fill="var(--accent)" font-size="8.5" font-family="IBM Plex Mono" id="compA"></text></g>`;
   // service valves
@@ -616,6 +645,7 @@ function renderSchemStatic(){
     let ty = heat ? sg.heat : sg.cool;
     if (ty === 'lv' && on && r.ze < 0 && !r.ctx.compRev && !r.starved) ty = 'lmix';      // floodback: the suction line carries liquid too
     if (on && r.starved) ty = ty === 'liq' ? 'hv' : ty === 'lmix' ? 'lv' : ty;         // starved: vapor everywhere
+    if (k === 'acc' && on && !r.starved) ty = S.accState === 'over' || S.accState === 'drain' ? 'lmix' : 'lv';   // after the accumulator: wet only when it's spilling or bleeding liquid back
     let col = on ? COL[ty] : COL.off;
     $('seg-' + k).setAttribute('stroke', col);
     $('seg-' + k).setAttribute('stroke-dasharray', on && r.upSt.phase === '2ph' && ((!heat && (k==='ll'||k==='msv'||k==='odm')) || (heat && (k==='ll'||k==='msv'||k==='idm'))) ? '5 2' : '');
@@ -653,6 +683,11 @@ function renderSchemStatic(){
   markSel();
 }
 function updateSchemLive(){
+  { const L = Math.min(1, S.accM / accCap()), hgt = 38 * L, el = $('accLiq');
+    if (el) { el.setAttribute('y', (241 - hgt).toFixed(2)); el.setAttribute('height', hgt.toFixed(2));
+      const sf = $('accSurf'); sf.setAttribute('y', (241 - hgt - 0.6).toFixed(2)); sf.setAttribute('opacity', L > 0.01 && L < 0.99 ? (0.6 + 0.4 * Math.sin(S.t * 3)).toFixed(2) : 0);
+      $('accShell').setAttribute('stroke', S.accState === 'over' ? 'var(--bad)' : L > 0.6 ? 'var(--warn, #ffb43d)' : 'var(--line)');
+      $('accPct').textContent = L >= 0.01 ? `${f0(L * 100)}%` : ''; } }
   const a = res.air, heat = res.ctx.heat, on = S.comp && !res.starved;
   const odA = a.outdoor, idA = a.indoor;
   const io = (k, tin, tout) => on ? `${k} in ${f1(tin)}°F → out ${f1(tout)}°F` : `${k} in ${f1(tin)}°F`;
@@ -745,7 +780,16 @@ function renderProbe(){
     } else if (id === 'rv') {
       h = `<h3>Reversing valve</h3><p class="hint">The thermostat is calling for ${cfg.mode === 'heat' ? 'heating, so the control has shifted the valve to send hot gas up the vapor line to the indoor coil' : 'cooling, so the control has shifted the valve to send hot gas to the outdoor coil'}. Check line temperatures to confirm where the hot gas actually goes. Brands differ on which mode energizes the solenoid (O vs B terminal).</p>` + kv([['Discharge side', fmtP(disp.Pd)], ['Suction side', fmtP(disp.Ps)]]);
     } else if (id === 'acc') {
-      h = `<h3>Suction accumulator</h3><p class="hint">Catches liquid that leaves the evaporator so it can't slug the compressor.</p>` + kv([['Evaporator exit', on ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F SH' : `${(r.xEo*100).toFixed(0)}% vapor`) : '—'], ['Holding liquid', on && r.ze < 0 ? 'YES' : 'no']]);
+      const cap = accCap(), L = S.accM / cap;
+      const stTxt = { over: 'FULL — spilling liquid into the compressor', fill: 'Filling', drain: 'Draining back to the compressor', off: 'Holding liquid (no flow)', hold: 'Holding steady', dry: 'Empty (dry)' }[S.accState];
+      h = `<h3>Suction accumulator</h3><p class="hint">Liquid that leaves the evaporator drops to the bottom of the shell. Gas leaves through the top of the J-tube; liquid and oil are metered back through a small bleed hole at the bottom of the J. If liquid arrives faster than the hole returns it, the level rises until the shell is full and liquid spills over into the compressor.</p>` + kv([
+        ['Evaporator exit', on && !r.starved ? (r.ze >= 0 ? r.ze.toFixed(1)+'°F SH' : `${(r.xEo*100).toFixed(0)}% vapor`) : '—'],
+        ['Liquid level', `${f0(L * 100)}% · ${lbOz(S.accM)} of ${lbOz(cap)}`],
+        ['Status', stTxt],
+        ['Liquid arriving', on ? f1(S.accIn) + ' lb/h' : '0 lb/h'],
+        ['Returned by bleed hole', on ? f1(S.accBleed) + ' lb/h' : '0 lb/h'],
+        S.accOver > 0 && ['Spilling over', f1(S.accOver) + ' lb/h'],
+      ]) + (!S.comp && L > 0.05 ? '<p class="hint">Liquid is sitting in the accumulator with the compressor off. Expect a wet start: it will bleed back into the compressor when it restarts.</p>' : '');
     }
   }
   $('probeBody').innerHTML = h;
@@ -779,6 +823,8 @@ function renderAlerts(){
   if (r.upSt.phase === '2ph') A.push(['warn', `Flash gas at the ${heat?'outdoor':'indoor'} metering device (${(r.upSt.x*100).toFixed(0)}% vapor) — no liquid seal. Short charge or restriction.`]);
   if (r.ze < 0) A.push(['bad', `Evaporator flooding — refrigerant leaves it ${(r.xEo*100).toFixed(0)}% vapor. Liquid floodback to the compressor.`]);
   if (r.ze < 0) A.push(['info', `With liquid in the suction line the gauge superheat sits at saturation — about ${(v => Math.abs(v) < 0.05 ? '0.0' : f1(v))(Math.min(0, F().state(r.Ps, r.h1).T - F().tDew(r.Ps)))}°F on ${cfg.refrigerant}${F().tDew(r.Ps) - F().tBub(r.Ps) > 1.5 ? ' (negative because of temperature glide)' : ''} — no matter how much liquid is coming back. Watch discharge superheat instead: it falls toward zero as floodback gets worse.`]);
+  if (S.comp && S.accState === 'over') A.push(['bad', `Accumulator full — liquid is spilling over the J-tube straight into the compressor (${f0(S.accOver)} lb/h). Liquid slugging: risk of broken valves, scrolls and washed-out bearings.`]);
+  else if (S.comp && S.accState === 'fill') A.push(['warn', `Accumulator filling with liquid (${f0(S.accM / accCap() * 100)}% full). It buys time, but if the floodback continues it will overflow.`]);
   if (r.ze < 0 && cfg.comp.type === 'recip') A.push(['bad', 'Reciprocating compressors cannot compress liquid — floodback here risks broken valves and connecting rods (liquid slugging).']);
   if (cfg.comp.type === 'recip' && r.PR > 7) A.push(['warn', `Compression ratio ${r.PR.toFixed(1)} is high for a reciprocating compressor — re-expansion from the clearance volume is cutting its pumping (volumetric efficiency ${(r.etaV*100).toFixed(0)}%).`]);
   if (cfg.comp.type === 'screw' && (cfg.comp.slide ?? 100) < 50) A.push(['info', `Screw slide valve at ${cfg.comp.slide}% — part-load efficiency of a slide valve falls off well below the inverter's.`]);
@@ -1247,7 +1293,7 @@ renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
   const now = performance.now(), dt = Math.min(1, (now - lastT) / 1000); lastT = now;
-  const sig = () => [S.comp, S.trip, S.lock, S.tripWhy, S.trips].join('|');
+  const sig = () => [S.comp, S.trip, S.lock, S.tripWhy, S.trips, S.accState, Math.floor(S.accM / accCap() * 10)].join('|');
   const before = sig();
   tick(dt);
   if (before !== sig()) renderAll();
