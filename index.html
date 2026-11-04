@@ -148,7 +148,7 @@ svg text{font-family:var(--f-body)}
   <button class="btn" id="callBtn">Thermostat: ON</button>
 </header>
 <div class="status"><span class="pill run" id="statePill">Running</span><span class="clock" id="clock">t = 0:00</span><span class="clock" id="ascTxt"></span>
-  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.1.1</span>
+  <span class="clock ver" id="ver" title="Build 2026-11-04">v1.1.2</span>
   <span class="seg" role="group" aria-label="Simulation speed"><button data-spd="1" class="on">1×</button><button data-spd="4">4×</button><button data-spd="16">16×</button></span>
   <button class="btn" id="resetCtl" style="display:none">Reset control</button>
 </div>
@@ -925,7 +925,7 @@ const SEG = {
   rvacc: {d:'M90 184 V202', cool:'lv', heat:'lv', rev:[0,0]},
   acc:   {d:'M90 242 V266 H160 V256', cool:'lv', heat:'lv', rev:[0,0]},
 };
-const TP = [[160,192],[16,130],[196,92],[206,150],[248,150],[269,126],[384,150],[206,250],[125,266]];
+const TP = [[160,160],[16,130],[196,92],[206,150],[248,150],[269,126],[384,150],[206,250],[125,266]];
 let selected = {kind:'part', id:'comp'};
 function buildSchem(){
   const svg = $('schem');
@@ -1543,7 +1543,7 @@ buildTiles(); buildSchem();
 solveNow(); disp = Object.assign({}, VM);
 buildControls();
 $('subtitle').textContent = `Split heat pump · ${cfg.refrigerant} · ${cfg.tons} ton · ${cfg.mode === 'heat' ? 'heating' : 'cooling'}`;
-logEvent('Simulator v1.1.1 started at steady state.');
+logEvent('Simulator v1.1.2 started at steady state.');
 renderAll();
 let lastT = performance.now(), slow = 0;
 setInterval(() => {
